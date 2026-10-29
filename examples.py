@@ -143,3 +143,29 @@ VALID_QUERIES = [
     "SELECT a.title, c.title FROM Books a JOIN Books c ON a.author = c.author AND a.id < c.id",
     "SELECT m.name FROM Members m JOIN Loans l ON m.id = l.member_id WHERE l.id > 100",  # empty join
 ]
+
+# The 10 built-in questions (gold = their final, correct SQL) plus 10 more.
+GOLD_QUESTIONS = [(q["question"], q["responses"][-1]) for q in BUILTIN_QUESTIONS] + [
+    ("How many members are there?",
+     "SELECT COUNT(*) FROM Members"),
+    ("List the names of members who joined in 2024.",
+     "SELECT name FROM Members WHERE joined_on BETWEEN '2024-01-01' AND '2024-12-31'"),
+    ("Which books by J.R.R. Tolkien does the library have?",
+     "SELECT title FROM Books WHERE author = 'J.R.R. Tolkien'"),
+    ("How many loans does each member have? Show the member's name.",
+     "SELECT m.name, COUNT(*) FROM Members m JOIN Loans l ON m.id = l.member_id GROUP BY m.name"),
+    ("Which book titles have been borrowed at least twice?",
+     "SELECT b.title FROM Books b JOIN Loans l ON b.id = l.book_id GROUP BY b.title "
+     "HAVING COUNT(*) >= 2"),
+    ("What is the earliest loan due date?",
+     "SELECT MIN(due_date) FROM Loans"),
+    ("How many different authors are in the library?",
+     "SELECT COUNT(DISTINCT author) FROM Books"),
+    ("List all book titles in alphabetical order.",
+     "SELECT title FROM Books ORDER BY title"),
+    ("Which genres have exactly one book?",
+     "SELECT genre FROM Books GROUP BY genre HAVING COUNT(*) = 1"),
+    ("Show the titles of books borrowed by Alice Rao.",
+     "SELECT b.title FROM Books b JOIN Loans l ON b.id = l.book_id "
+     "JOIN Members m ON m.id = l.member_id WHERE m.name = 'Alice Rao'"),
+]

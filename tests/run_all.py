@@ -34,6 +34,7 @@ DESCRIPTIONS = {
     "test_llm_client": "LLM client without network: stub questions, mode selection, prompts",
     "test_cli": "main.py end to end (subprocess, no API key): --sql, --demo, --list, -i",
     "test_visualize": "visualize.py: self-contained HTML with every section",
+    "test_evaluate": "evaluate.py: mutation detection, live-evaluation scoring logic (fake LLMs)",
 }
 
 
