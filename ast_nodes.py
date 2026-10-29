@@ -30,7 +30,7 @@ parentheses only where operator precedence requires them. It is used to
 print query plans, optimizer output, and in the parser round-trip tests.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import List, Optional, Union
 
 
@@ -265,6 +265,25 @@ def children(node):
     if isinstance(node, BetweenExpr):
         return [node.expr, node.low, node.high]
     return []   # ColumnRef, Literal, Star are leaves
+
+
+def map_children(node, fn):
+    """Return a copy of `node` whose direct sub-expressions are replaced by
+    fn(child). Leaves are returned unchanged. This is the building block
+    for bottom-up tree rewrites such as constant folding."""
+    if isinstance(node, AggregateCall):
+        return replace(node, arg=fn(node.arg))
+    if isinstance(node, BinaryOp):
+        return replace(node, left=fn(node.left), right=fn(node.right))
+    if isinstance(node, UnaryOp):
+        return replace(node, operand=fn(node.operand))
+    if isinstance(node, LikeExpr):
+        return replace(node, expr=fn(node.expr), pattern=fn(node.pattern))
+    if isinstance(node, InExpr):
+        return replace(node, expr=fn(node.expr), items=[fn(i) for i in node.items])
+    if isinstance(node, BetweenExpr):
+        return replace(node, expr=fn(node.expr), low=fn(node.low), high=fn(node.high))
+    return node
 
 
 def walk(node):

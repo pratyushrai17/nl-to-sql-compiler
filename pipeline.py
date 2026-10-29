@@ -3,7 +3,8 @@ pipeline.py
 
 Drives the compiler stages for one SQL string and times each stage.
 
-    front_end(sql)   lexer -> parser -> semantic analyzer
+    front_end(sql)    lexer -> parser -> semantic analyzer
+    compile_sql(sql)  front_end, then the planner (intermediate code)
 
 Every stage reports problems as errors.CompileError objects (lexical,
 syntax or semantic), so callers - main.py and the repair loop - handle all
@@ -17,6 +18,7 @@ from typing import Dict, List, Optional
 from errors import CompileError, LexError, ParseError
 from lexer import tokenize
 from parser import parse
+from query_plan import QueryPlan, build_plan
 from semantic_analyzer import analyze
 
 
@@ -27,6 +29,7 @@ class CompileResult:
     ast: Optional[object] = None
     errors: List[CompileError] = field(default_factory=list)
     failed_stage: Optional[str] = None          # "lexical" / "syntax" / "semantic"
+    plan: Optional[QueryPlan] = None            # set by compile_sql when valid
     timings: Dict[str, float] = field(default_factory=dict)   # stage -> milliseconds
 
     @property
@@ -67,4 +70,13 @@ def front_end(sql: str) -> CompileResult:
         result.errors = analyze(result.ast)
     if result.errors:
         result.failed_stage = "semantic"
+    return result
+
+
+def compile_sql(sql: str) -> CompileResult:
+    """front_end() plus intermediate-code generation for valid queries."""
+    result = front_end(sql)
+    if result.ok:
+        with _Timer(result.timings, "plan"):
+            result.plan = build_plan(result.ast)
     return result
