@@ -27,8 +27,8 @@ of the project; the LLM is just the front-end's input source.
 
 ## HARD CONSTRAINT (all phases)
 
-The lexer, parser, AST, symbol table, and semantic analyzer **must all be
-hand-written from scratch**.
+The lexer, parser, AST, symbol table, semantic analyzer, query planner,
+optimizer and plan interpreter **must all be hand-written from scratch**.
 
 Do **NOT** use `sqlparse`, `sqlglot`, ANTLR, PLY, Lark, or any other existing SQL
 parsing / parser-generator library anywhere in this project. Doing so defeats the
@@ -59,17 +59,17 @@ of truth for semantic validation and for the schema description sent to the LLM.
 
 This project has 3 phases:
 
-- **Phase 1 (CURRENT)** — Review 1: Problem Definition and System Design.
-  Minimal working prototype only. Demonstrates the pipeline concept end-to-end on
-  a couple of hardcoded examples. Deliberately *not* robust: no extensive error
-  handling, no exhaustive grammar, no polished retry system. Just enough SQL
-  support to demo one or two working queries plus one that fails validation and
-  gets repaired. **Prioritize runnable and demoable over complete.**
+- **Phase 1 (DONE)** — Review 1: Problem Definition and System Design.
+  Minimal working prototype demonstrating the pipeline end-to-end.
 - **Phase 2** — Full core implementation of all modules.
 - **Phase 3** — Complete integration, full testing, error handling, final polish.
 
-When working in this repo, check which phase is current before expanding scope.
-Do not build Phase 2/3 robustness during Phase 1.
+**Current status: Phases 2+3 in progress** (being completed together).
+
+The system **must be fully demoable offline (no API key)**: every compiler
+stage, the `--sql` mode, the built-in stub examples (including the repair
+path), the tests and the evaluation must all run without `ANTHROPIC_API_KEY`.
+The live LLM path is optional.
 
 ## Project Structure
 
