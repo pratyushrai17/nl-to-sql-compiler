@@ -1,189 +1,179 @@
 """
 semantic_analyzer.py
 
-Validates a SelectStatement AST against the hardcoded schema in
-symbol_table.py. Phase 1 scope, per CLAUDE.md:
+Semantic analysis: checks that a syntactically valid SelectStatement also
+*means* something against the Library schema, and decorates the AST with
+what it learns (which table each column belongs to).
 
-  - undefined table detection
-  - undefined / ambiguous column detection (including qualified refs and
-    table aliases introduced by FROM / JOIN)
-  - one aggregate/GROUP BY misuse check: a plain (non-aggregated) selected
-    column can't appear alongside an aggregate function unless it's also
-    listed in GROUP BY
+Passes, in order:
+  1. Build the query scope from FROM / JOIN (symbol_table.Scope).
+       S001 undefined table, S005 duplicate table alias
+  2. Resolve every column reference against that scope.
+       S002 undefined column, S003 ambiguous column, S004 unknown qualifier
+  3. The GROUP BY rule (see check_grouping).
+       S010 column used outside an aggregate but not listed in GROUP BY
 
-Returns a list of human-readable error strings (empty list = valid). The
-repair_loop feeds these strings straight back to the LLM as the "what to
-fix" instruction, so messages are written to be actionable, not just
-diagnostic.
+analyze() returns a list of SemanticError (empty = valid). All errors are
+collected rather than stopping at the first, so the LLM can fix them all in
+one repair attempt.
 """
 
 from ast_nodes import (
-    AggregateCall, ColumnRef, Condition, LogicalExpr, SelectStatement, Star,
+    AggregateCall, ColumnRef, SelectStatement, Star, column_refs, walk,
 )
-from symbol_table import column_exists, get_columns, table_exists
+from errors import SemanticError
+from symbol_table import (
+    Scope, canonical_table, closest_match, column_type, get_columns, SCHEMA,
+)
 
 
-class SemanticError(Exception):
-    """Raised by analyze_or_raise(); carries the full list of error messages."""
+class Analyzer:
+    def __init__(self, stmt: SelectStatement):
+        self.stmt = stmt
+        self.scope = Scope()
+        self.errors = []
 
-    def __init__(self, errors):
-        self.errors = errors
-        super().__init__("; ".join(errors))
+    def error(self, code, message, node=None):
+        line = getattr(node, "line", None) or None
+        col = getattr(node, "col", None) or None
+        self.errors.append(SemanticError(code, message, line, col))
+
+    # -- driver ----------------------------------------------------------------
+
+    def run(self):
+        self.build_scope()
+        if self.errors:
+            # If a table does not exist, resolving columns against it would only
+            # produce a cascade of confusing follow-on errors - stop here.
+            return self.errors
+
+        stmt = self.stmt
+        for item in stmt.select_items:
+            self.check_select_item(item)
+        for join in stmt.joins:
+            self.resolve_all(join.on)
+        if stmt.where is not None:
+            self.resolve_all(stmt.where)
+        for col in stmt.group_by:
+            self.resolve_column(col)
+        if stmt.having is not None:
+            self.resolve_all(stmt.having)
+        for item in stmt.order_by:
+            self.resolve_all(item.expr)
+
+        if not self.errors:
+            self.check_grouping()
+        return self.errors
+
+    # -- pass 1: scope ------------------------------------------------------------
+
+    def build_scope(self):
+        for ref in self.stmt.tables():
+            table = canonical_table(ref.name)
+            if table is None:
+                hint = closest_match(ref.name, SCHEMA.keys())
+                suggestion = f" Did you mean '{hint}'?" if hint else ""
+                self.error("S001",
+                           f"Table '{ref.name}' is not defined in the schema "
+                           f"(tables: {', '.join(SCHEMA)}).{suggestion}", ref)
+                continue
+            ref.name = table   # canonical spelling, e.g. books -> Books
+            binding = ref.binding
+            if self.scope.lookup_binding(binding):
+                self.error("S005",
+                           f"Table name or alias '{binding}' is used more than once in "
+                           f"FROM/JOIN; give each table a distinct alias", ref)
+                continue
+            self.scope.add(binding, table)
+
+    # -- pass 2: name resolution ------------------------------------------------------
+
+    def check_select_item(self, item):
+        if isinstance(item.expr, Star):
+            star = item.expr
+            if star.table is not None and self.scope.lookup_binding(star.table) is None:
+                self.error("S004",
+                           f"'{star.table}.*' refers to '{star.table}', which is not a "
+                           f"table or alias in FROM/JOIN ({', '.join(self.scope.binding_names())})",
+                           star)
+            return
+        self.resolve_all(item.expr)
+
+    def resolve_all(self, expr):
+        for node in walk(expr):
+            if isinstance(node, ColumnRef):
+                self.resolve_column(node)
+
+    def resolve_column(self, col: ColumnRef):
+        """Find the table a column belongs to and annotate the node with it."""
+        if col.table is not None:
+            found = self.scope.lookup_binding(col.table)
+            if found is None:
+                self.error("S004",
+                           f"'{col.table}.{col.name}' uses '{col.table}', which is not a table "
+                           f"or alias in FROM/JOIN ({', '.join(self.scope.binding_names())})",
+                           col)
+                return
+            binding, table = found
+            matches = [m for m in self.scope.tables_with_column(col.name) if m[0] == binding]
+            if not matches:
+                self.report_unknown_column(col, [table])
+                return
+        else:
+            matches = self.scope.tables_with_column(col.name)
+            if not matches:
+                self.report_unknown_column(col, [t for _, t in self.scope.bindings])
+                return
+            if len(matches) > 1:
+                options = " or ".join(f"'{b}.{c}'" for b, _, c in matches)
+                self.error("S003",
+                           f"Column '{col.name}' is ambiguous: it exists in more than one "
+                           f"table in scope; qualify it as {options}", col)
+                return
+
+        binding, table, canonical = matches[0]
+        col.name = canonical
+        col.qualifier = binding
+        col.sql_type = column_type(table, canonical)
+
+    def report_unknown_column(self, col, tables):
+        known = sorted({c for t in tables for c in get_columns(t)})
+        hint = closest_match(col.name, known)
+        suggestion = f" Did you mean '{hint}'?" if hint else ""
+        where = f"table '{tables[0]}'" if len(tables) == 1 else \
+            f"any table in scope ({', '.join(tables)})"
+        self.error("S002",
+                   f"Column '{col.name}' does not exist in {where}.{suggestion} "
+                   f"(known columns: {', '.join(known)})", col)
+
+    # -- pass 3: GROUP BY rule ---------------------------------------------------------
+
+    def check_grouping(self):
+        """In an aggregated query (one with GROUP BY or any aggregate in the
+        SELECT list), each output row stands for a whole *group* of input
+        rows. A column outside an aggregate has one value per group only if
+        it is a GROUP BY column; any other column would be ambiguous."""
+        stmt = self.stmt
+        has_aggregate = any(isinstance(n, AggregateCall)
+                            for item in stmt.select_items for n in walk(item.expr))
+        if not stmt.group_by and not has_aggregate:
+            return
+
+        grouped = {c.key() for c in stmt.group_by}
+        for item in stmt.select_items:
+            if isinstance(item.expr, Star):
+                self.error("S010", "SELECT * cannot be used in an aggregated query; list the "
+                                   "GROUP BY columns and aggregates explicitly", item.expr)
+                continue
+            for col in column_refs(item.expr, inside_aggregates=False):
+                if col.key() not in grouped:
+                    self.error("S010",
+                               f"Column '{col}' is selected alongside an aggregate but is not "
+                               f"in GROUP BY; add it to GROUP BY or wrap it in an aggregate "
+                               f"such as COUNT/MIN/MAX", col)
 
 
 def analyze(stmt: SelectStatement):
-    """Return a list of semantic error strings. Empty list means valid."""
-    errors = []
-
-    scope = _build_table_scope(stmt, errors)
-    # If a referenced table doesn't exist, column resolution against it is
-    # meaningless — stop here so error messages stay easy to read.
-    if errors:
-        return errors
-
-    for col in _collect_column_refs(stmt):
-        _resolve_column(col, scope, errors)
-
-    errors.extend(_check_aggregate_usage(stmt, scope))
-
-    return errors
-
-
-def analyze_or_raise(stmt: SelectStatement):
-    errors = analyze(stmt)
-    if errors:
-        raise SemanticError(errors)
-
-
-# -- table scope --------------------------------------------------------------
-
-def _build_table_scope(stmt: SelectStatement, errors):
-    """Map alias-or-table-name -> real table name for every table referenced
-    in FROM and JOIN. Reports undefined tables and duplicate aliases."""
-    scope = {}
-
-    def add(table_ref):
-        if not table_exists(table_ref.name):
-            errors.append(f"Table '{table_ref.name}' is not defined in the schema")
-            return
-        key = table_ref.alias or table_ref.name
-        if key in scope:
-            errors.append(f"Table name or alias '{key}' is used more than once")
-            return
-        scope[key] = table_ref.name
-
-    add(stmt.from_table)
-    for join in stmt.joins:
-        add(join.table)
-
-    return scope
-
-
-# -- column collection ----------------------------------------------------------
-
-def _collect_column_refs(stmt: SelectStatement):
-    """Every ColumnRef anywhere in the AST that needs to resolve to a real
-    column: SELECT list, WHERE, JOIN ON, GROUP BY, ORDER BY."""
-    refs = []
-
-    for item in stmt.select_items:
-        if isinstance(item.expr, ColumnRef):
-            refs.append(item.expr)
-        elif isinstance(item.expr, AggregateCall) and isinstance(item.expr.arg, ColumnRef):
-            refs.append(item.expr.arg)
-        # Star needs no resolution.
-
-    for join in stmt.joins:
-        refs.extend(_collect_from_condition(join.on))
-
-    if stmt.where is not None:
-        refs.extend(_collect_from_condition(stmt.where))
-
-    refs.extend(stmt.group_by)
-    refs.extend(item.column for item in stmt.order_by)
-
-    return refs
-
-
-def _collect_from_condition(expr):
-    if isinstance(expr, Condition):
-        refs = []
-        if isinstance(expr.left, ColumnRef):
-            refs.append(expr.left)
-        if isinstance(expr.right, ColumnRef):
-            refs.append(expr.right)
-        return refs
-    if isinstance(expr, LogicalExpr):
-        return _collect_from_condition(expr.left) + _collect_from_condition(expr.right)
-    return []
-
-
-def _resolve_column(col: ColumnRef, scope: dict, errors: list):
-    if col.table is not None:
-        real_table = scope.get(col.table)
-        if real_table is None:
-            errors.append(
-                f"Table or alias '{col.table}' used in column '{col.table}.{col.name}' "
-                f"is not in scope (not listed in FROM/JOIN)"
-            )
-            return
-        if not column_exists(real_table, col.name):
-            errors.append(
-                f"Column '{col.name}' does not exist on table '{real_table}' "
-                f"(known columns: {', '.join(get_columns(real_table))})"
-            )
-        return
-
-    # Unqualified column: must resolve unambiguously across all tables in scope.
-    matches = [table for table in scope.values() if column_exists(table, col.name)]
-    if not matches:
-        errors.append(
-            f"Column '{col.name}' does not exist on any table in scope "
-            f"({', '.join(scope.values())})"
-        )
-    elif len(matches) > 1:
-        errors.append(
-            f"Column '{col.name}' is ambiguous - it exists on multiple tables in scope "
-            f"({', '.join(matches)}); qualify it, e.g. '{matches[0]}.{col.name}'"
-        )
-
-
-# -- aggregate / GROUP BY misuse check --------------------------------------------
-
-def _check_aggregate_usage(stmt: SelectStatement, scope: dict):
-    errors = []
-
-    has_aggregate = any(isinstance(item.expr, AggregateCall) for item in stmt.select_items)
-    if not has_aggregate:
-        return errors
-
-    plain_columns = [item.expr for item in stmt.select_items if isinstance(item.expr, ColumnRef)]
-    if not plain_columns:
-        return errors
-
-    if not stmt.group_by:
-        for col in plain_columns:
-            errors.append(
-                f"Column '{col}' is selected alongside an aggregate function but is not "
-                f"wrapped in an aggregate and there is no GROUP BY clause; add "
-                f"'GROUP BY {col}' or wrap it in an aggregate function"
-            )
-        return errors
-
-    group_by_keys = {_column_key(c, scope) for c in stmt.group_by}
-    for col in plain_columns:
-        if _column_key(col, scope) not in group_by_keys:
-            errors.append(
-                f"Column '{col}' is selected alongside an aggregate function but does not "
-                f"appear in the GROUP BY clause"
-            )
-
-    return errors
-
-
-def _column_key(col: ColumnRef, scope: dict):
-    """Normalize a column ref to (real_table_or_None, name) so a qualified
-    and unqualified reference to the same column compare equal."""
-    if col.table is not None:
-        return (scope.get(col.table, col.table), col.name)
-    return (None, col.name)
+    """Validate `stmt` against the schema. Returns a list of SemanticError
+    (empty means the query is valid) and annotates the AST in place."""
+    return Analyzer(stmt).run()
