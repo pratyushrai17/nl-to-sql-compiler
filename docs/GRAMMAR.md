@@ -124,4 +124,27 @@ Every error has a code, a message and a 1-based line/column (see
 | S003 | semantic | Ambiguous column (exists in more than one joined table) |
 | S004 | semantic | Qualifier is not a table or alias in FROM/JOIN |
 | S005 | semantic | Duplicate table name or alias |
-| S010 | semantic | Column used outside an aggregate but not in GROUP BY |
+| S006 | semantic | Type mismatch in a comparison, IN list or BETWEEN (e.g. TEXT vs INTEGER) |
+| S007 | semantic | Wrong operand type: arithmetic on text, LIKE on a number, SUM/AVG of text |
+| S008 | semantic | Aggregate function in WHERE (use HAVING) |
+| S009 | semantic | Aggregate in JOIN ... ON, or an aggregate nested inside another |
+| S010 | semantic | GROUP BY rule: column used outside an aggregate but not in GROUP BY (SELECT or ORDER BY), or SELECT * in an aggregated query |
+| S011 | semantic | HAVING without GROUP BY |
+| S012 | semantic | HAVING uses a column that is not in GROUP BY |
+| S013 | semantic | A condition was expected (WHERE / ON / HAVING / AND / OR / NOT operand is not true/false) |
+| S014 | semantic | ORDER BY misuse: position number, or with DISTINCT a term not in the SELECT list |
+| S015 | semantic | `*` used anywhere except `SELECT *` / `COUNT(*)` |
+| S016 | semantic | SELECT alias used in WHERE / GROUP BY / HAVING (aliases are visible only in ORDER BY) |
+
+## Semantic rules in brief
+
+* **Name resolution:** every column must exist in exactly one table in scope
+  (or be qualified). Once a table has an alias, only the alias can qualify it.
+* **Types:** INTEGER and REAL compare with each other; TEXT compares only
+  with TEXT. Conditions (BOOLEAN) are produced by comparisons, LIKE, IN,
+  BETWEEN, AND, OR, NOT, TRUE and FALSE.
+* **GROUP BY rule:** a query is *aggregated* if it has GROUP BY or an
+  aggregate in SELECT, HAVING or ORDER BY. In an aggregated query, every
+  column outside an aggregate (in SELECT, HAVING and ORDER BY) must be a
+  GROUP BY column.
+* **Aliases:** a SELECT alias can be used in ORDER BY only.
