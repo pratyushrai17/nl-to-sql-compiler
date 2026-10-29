@@ -119,6 +119,7 @@ Every error has a code, a message and a 1-based line/column (see
 | P002 | syntax   | Only SELECT is supported (non-SELECT statement) |
 | P003 | syntax   | Unsupported SQL feature (subquery, outer join, UNION, ...) |
 | P004 | syntax   | Unknown function (only COUNT/SUM/AVG/MIN/MAX) |
+| P005 | syntax   | Expression nested too deeply (over 40 nested parentheses/function calls, or 150 operator levels) |
 | S001 | semantic | Undefined table |
 | S002 | semantic | Undefined column (with a "did you mean" hint) |
 | S003 | semantic | Ambiguous column (exists in more than one joined table) |

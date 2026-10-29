@@ -30,6 +30,16 @@ line/column of the offending token. Error codes:
     P002  only SELECT is supported (DROP / DELETE / UPDATE / INSERT / ...)
     P003  unsupported SQL feature (subquery, LEFT JOIN, UNION, ...)
     P004  unknown function
+    P005  expression nested too deeply (more than MAX_DEPTH levels)
+
+Depth limit: every nested parenthesis, NOT, unary minus, and every
+operator in a chain such as a OR b OR c ... adds one level to the
+expression tree. Later stages walk that tree recursively, so a
+pathological query (hundreds of nested parentheses) would exhaust Python's
+recursion limit. The parser therefore rejects expressions deeper than
+MAX_DEPTH with a clear error instead of crashing. Parentheses and function
+calls have their own, smaller limit (MAX_PAREN_DEPTH), because each one
+re-enters the parser through all eight precedence levels at once.
 """
 
 from ast_nodes import (
@@ -43,6 +53,9 @@ from symbol_table import AGGREGATE_FUNCTIONS
 
 # token type -> operator spelling in the AST
 COMPARISON_TOKENS = {"EQ": "=", "NEQ": "!=", "LT": "<", "GT": ">", "LE": "<=", "GE": ">="}
+
+MAX_DEPTH = 150
+MAX_PAREN_DEPTH = 40
 
 NON_SELECT_STATEMENTS = {
     "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE",
@@ -61,6 +74,8 @@ class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
         self.pos = 0
+        self.depth = 0         # current expression nesting depth (see MAX_DEPTH)
+        self.paren_depth = 0   # current ( ... ) / function-call nesting
 
     # -- token stream helpers -------------------------------------------------------
 
@@ -104,6 +119,16 @@ class Parser:
             f"(this tool never modifies the database)",
             tok.line, tok.col,
         )
+
+    def deeper(self, levels=1):
+        """Record `levels` more levels of expression nesting."""
+        self.depth += levels
+        if self.depth > MAX_DEPTH or self.paren_depth > MAX_PAREN_DEPTH:
+            tok = self.peek()
+            raise ParseError("P005", f"Expression is nested too deeply (limit: {MAX_PAREN_DEPTH} "
+                                     f"nested parentheses/function calls, {MAX_DEPTH} levels of "
+                                     f"operators); simplify the query",
+                             tok.line, tok.col)
 
     def error_unsupported(self, tok, feature):
         raise ParseError("P003", f"{feature} is not supported by this SQL subset",
@@ -265,29 +290,35 @@ class Parser:
 
     # -- expressions, lowest precedence first -------------------------------------------------
 
+    def parse_binary_chain(self, operand_rule, token_types):
+        """Shared loop for left-associative operators:  operand {op operand}.
+        Each operator makes the tree one level deeper, so it counts toward MAX_DEPTH."""
+        start_depth = self.depth
+        left = operand_rule()
+        while self.check(*token_types):
+            tok = self.advance()
+            self.deeper()
+            left = BinaryOp(tok.value.upper() if tok.type in ("AND", "OR") else tok.value,
+                            left, operand_rule(), line=tok.line, col=tok.col)
+        self.depth = start_depth
+        return left
+
     def parse_expr(self):
         """expr := and_expr {OR and_expr}"""
-        left = self.parse_and()
-        while True:
-            tok = self.match("OR")
-            if not tok:
-                return left
-            left = BinaryOp("OR", left, self.parse_and(), line=tok.line, col=tok.col)
+        return self.parse_binary_chain(self.parse_and, ("OR",))
 
     def parse_and(self):
         """and_expr := not_expr {AND not_expr}"""
-        left = self.parse_not()
-        while True:
-            tok = self.match("AND")
-            if not tok:
-                return left
-            left = BinaryOp("AND", left, self.parse_not(), line=tok.line, col=tok.col)
+        return self.parse_binary_chain(self.parse_not, ("AND",))
 
     def parse_not(self):
         """not_expr := NOT not_expr | predicate"""
         tok = self.match("NOT")
         if tok:
-            return UnaryOp("NOT", self.parse_not(), line=tok.line, col=tok.col)
+            self.deeper()
+            operand = self.parse_not()
+            self.depth -= 1
+            return UnaryOp("NOT", operand, line=tok.line, col=tok.col)
         return self.parse_predicate()
 
     def parse_predicate(self):
@@ -334,25 +365,19 @@ class Parser:
 
     def parse_additive(self):
         """additive := term {("+" | "-") term}"""
-        left = self.parse_term()
-        while self.check("PLUS", "MINUS"):
-            tok = self.advance()
-            left = BinaryOp(tok.value, left, self.parse_term(), line=tok.line, col=tok.col)
-        return left
+        return self.parse_binary_chain(self.parse_term, ("PLUS", "MINUS"))
 
     def parse_term(self):
         """term := unary {("*" | "/") unary}"""
-        left = self.parse_unary()
-        while self.check("STAR", "SLASH"):
-            tok = self.advance()
-            left = BinaryOp(tok.value, left, self.parse_unary(), line=tok.line, col=tok.col)
-        return left
+        return self.parse_binary_chain(self.parse_unary, ("STAR", "SLASH"))
 
     def parse_unary(self):
         """unary := "-" unary | primary"""
         tok = self.match("MINUS")
         if tok:
+            self.deeper()
             operand = self.parse_unary()
+            self.depth -= 1
             # Fold "-5" into a negative literal right away; keep "-col" as an operator.
             if isinstance(operand, Literal) and isinstance(operand.value, (int, float)) \
                     and not isinstance(operand.value, bool):
@@ -376,7 +401,11 @@ class Parser:
             if self.peek(1).type == "SELECT":
                 self.error_unsupported(self.peek(1), "A subquery")
             self.advance()
+            self.paren_depth += 1
+            self.deeper()
             expr = self.parse_expr()
+            self.depth -= 1
+            self.paren_depth -= 1
             self.expect("RPAREN", "')' to close the parenthesis")
             return expr
 
@@ -405,7 +434,11 @@ class Parser:
         if star_tok:
             arg = Star(None, line=star_tok.line, col=star_tok.col)
         else:
+            self.paren_depth += 1
+            self.deeper()
             arg = self.parse_expr()
+            self.depth -= 1
+            self.paren_depth -= 1
         self.expect("RPAREN", f"')' to close {func}(")
         return AggregateCall(func, arg, distinct, line=name_tok.line, col=name_tok.col)
 

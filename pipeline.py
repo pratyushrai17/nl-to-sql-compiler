@@ -13,6 +13,10 @@ Drives the compiler stages for one SQL string and times each stage.
 Every stage reports problems as errors.CompileError objects (lexical,
 syntax or semantic), so callers - main.py and the repair loop - handle all
 three kinds the same way.
+
+Safety net: the parser already rejects over-deep expressions (P005), but if
+any later stage still ran out of Python recursion depth, the RecursionError
+is turned into the same structured P005 error instead of a crash.
 """
 
 import time
@@ -64,11 +68,24 @@ class _Timer:
         return False
 
 
+def too_complex_error():
+    return ParseError("P005", "The query is too deeply nested to process; simplify it")
+
+
 def front_end(sql: str) -> CompileResult:
     """Run lexer, parser and semantic analyzer. Never raises a CompileError:
     the first lexical/syntax error, or all semantic errors, are returned in
     result.errors."""
     result = CompileResult(sql=sql)
+    try:
+        return _front_end(result)
+    except RecursionError:
+        result.errors, result.failed_stage = [too_complex_error()], "syntax"
+        return result
+
+
+def _front_end(result):
+    sql = result.sql
     try:
         with _Timer(result.timings, "lex"):
             result.tokens = tokenize(sql)
@@ -90,10 +107,14 @@ def compile_sql(sql: str) -> CompileResult:
     """front_end() plus plan generation and optimization for valid queries."""
     result = front_end(sql)
     if result.ok:
-        with _Timer(result.timings, "plan"):
-            result.plan = build_plan(result.ast)
-        with _Timer(result.timings, "optimize"):
-            result.optimization = optimize(result.plan)
+        try:
+            with _Timer(result.timings, "plan"):
+                result.plan = build_plan(result.ast)
+            with _Timer(result.timings, "optimize"):
+                result.optimization = optimize(result.plan)
+        except RecursionError:
+            result.plan = result.optimization = None
+            result.errors, result.failed_stage = [too_complex_error()], "syntax"
     return result
 
 
