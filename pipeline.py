@@ -4,7 +4,8 @@ pipeline.py
 Drives the compiler stages for one SQL string and times each stage.
 
     front_end(sql)    lexer -> parser -> semantic analyzer
-    compile_sql(sql)  front_end, then the planner (intermediate code)
+    compile_sql(sql)  front_end, then the planner (intermediate code) and
+                      the optimizer
 
 Every stage reports problems as errors.CompileError objects (lexical,
 syntax or semantic), so callers - main.py and the repair loop - handle all
@@ -17,6 +18,7 @@ from typing import Dict, List, Optional
 
 from errors import CompileError, LexError, ParseError
 from lexer import tokenize
+from optimizer import OptimizationResult, optimize
 from parser import parse
 from query_plan import QueryPlan, build_plan
 from semantic_analyzer import analyze
@@ -30,11 +32,16 @@ class CompileResult:
     errors: List[CompileError] = field(default_factory=list)
     failed_stage: Optional[str] = None          # "lexical" / "syntax" / "semantic"
     plan: Optional[QueryPlan] = None            # set by compile_sql when valid
+    optimization: Optional[OptimizationResult] = None
     timings: Dict[str, float] = field(default_factory=dict)   # stage -> milliseconds
 
     @property
     def ok(self):
         return not self.errors
+
+    @property
+    def optimized_plan(self):
+        return self.optimization.after if self.optimization else None
 
 
 class _Timer:
@@ -74,9 +81,11 @@ def front_end(sql: str) -> CompileResult:
 
 
 def compile_sql(sql: str) -> CompileResult:
-    """front_end() plus intermediate-code generation for valid queries."""
+    """front_end() plus plan generation and optimization for valid queries."""
     result = front_end(sql)
     if result.ok:
         with _Timer(result.timings, "plan"):
             result.plan = build_plan(result.ast)
+        with _Timer(result.timings, "optimize"):
+            result.optimization = optimize(result.plan)
     return result

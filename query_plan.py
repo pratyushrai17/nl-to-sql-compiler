@@ -155,6 +155,21 @@ class QueryPlan:
 def node(op, children, **fields):
     """Create a PlanNode and fill in its static output columns/headers."""
     n = PlanNode(op, children, **fields)
+    set_columns(n)
+    return n
+
+
+def refresh_columns(n):
+    """Recompute columns/headers for a whole tree, bottom-up. The optimizer
+    calls this after it removes or inserts nodes."""
+    for child in n.children:
+        refresh_columns(child)
+    set_columns(n)
+
+
+def set_columns(n):
+    """Fill in n.columns / n.headers from its operator and its inputs."""
+    op, children = n.op, n.children
     if op == "SCAN":
         names = get_columns(n.table)
         n.columns = [f"{n.alias}.{c}" for c in names]
@@ -172,7 +187,6 @@ def node(op, children, **fields):
     else:   # FILTER, HAVING, SORT, DISTINCT, LIMIT pass their input through
         n.columns = list(children[0].columns)
         n.headers = list(children[0].headers)
-    return n
 
 
 def build_plan(stmt: SelectStatement) -> QueryPlan:
