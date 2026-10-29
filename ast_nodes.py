@@ -411,3 +411,58 @@ def statement_to_sql(stmt: SelectStatement):
     if stmt.limit is not None:
         parts.append(f"LIMIT {stmt.limit}")
     return " ".join(parts)
+
+
+# =============================================================================
+# Display tree (used by main.py's text tree and visualize.py's HTML tree)
+# =============================================================================
+
+def tree_node(label, children=None):
+    return {"label": str(label), "children": children or []}
+
+
+def expr_tree(node):
+    """An expression as a labelled tree: operators are inner nodes."""
+    if isinstance(node, BinaryOp):
+        return tree_node(node.op, [expr_tree(node.left), expr_tree(node.right)])
+    if isinstance(node, UnaryOp):
+        return tree_node(node.op, [expr_tree(node.operand)])
+    if isinstance(node, AggregateCall):
+        name = f"{node.func}(DISTINCT)" if node.distinct else node.func
+        return tree_node(name, [expr_tree(node.arg)])
+    if isinstance(node, LikeExpr):
+        return tree_node("NOT LIKE" if node.negated else "LIKE",
+                         [expr_tree(node.expr), expr_tree(node.pattern)])
+    if isinstance(node, InExpr):
+        items = tree_node("list", [expr_tree(i) for i in node.items])
+        return tree_node("NOT IN" if node.negated else "IN", [expr_tree(node.expr), items])
+    if isinstance(node, BetweenExpr):
+        return tree_node("NOT BETWEEN" if node.negated else "BETWEEN",
+                         [expr_tree(node.expr), expr_tree(node.low), expr_tree(node.high)])
+    return tree_node(to_sql(node))   # leaf: column, literal or *
+
+
+def statement_tree(stmt: SelectStatement):
+    """The whole query as a tree with one branch per clause."""
+    select_children = []
+    for item in stmt.select_items:
+        child = expr_tree(item.expr)
+        if item.alias:
+            child = tree_node(f"AS {item.alias}", [child])
+        select_children.append(child)
+    branches = [tree_node("SELECT DISTINCT" if stmt.distinct else "SELECT", select_children),
+                tree_node("FROM", [tree_node(repr(stmt.from_table))])]
+    for join in stmt.joins:
+        branches.append(tree_node(f"JOIN {join.table!r}", [tree_node("ON", [expr_tree(join.on)])]))
+    if stmt.where is not None:
+        branches.append(tree_node("WHERE", [expr_tree(stmt.where)]))
+    if stmt.group_by:
+        branches.append(tree_node("GROUP BY", [expr_tree(c) for c in stmt.group_by]))
+    if stmt.having is not None:
+        branches.append(tree_node("HAVING", [expr_tree(stmt.having)]))
+    if stmt.order_by:
+        branches.append(tree_node("ORDER BY", [tree_node(o.direction, [expr_tree(o.expr)])
+                                               for o in stmt.order_by]))
+    if stmt.limit is not None:
+        branches.append(tree_node("LIMIT", [tree_node(stmt.limit)]))
+    return tree_node("SelectStatement", branches)

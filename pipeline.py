@@ -6,6 +6,9 @@ Drives the compiler stages for one SQL string and times each stage.
     front_end(sql)    lexer -> parser -> semantic analyzer
     compile_sql(sql)  front_end, then the planner (intermediate code) and
                       the optimizer
+    run_compiled(result, conn)
+                      execute the optimized plan with our interpreter, then
+                      cross-check against SQLite running the original SQL
 
 Every stage reports problems as errors.CompileError objects (lexical,
 syntax or semantic), so callers - main.py and the repair loop - handle all
@@ -17,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from errors import CompileError, LexError, ParseError
+from executor import CrossCheck, ExecutionResult, cross_check, execute
 from lexer import tokenize
 from optimizer import OptimizationResult, optimize
 from parser import parse
@@ -33,6 +37,8 @@ class CompileResult:
     failed_stage: Optional[str] = None          # "lexical" / "syntax" / "semantic"
     plan: Optional[QueryPlan] = None            # set by compile_sql when valid
     optimization: Optional[OptimizationResult] = None
+    execution: Optional[ExecutionResult] = None    # set by run_compiled
+    check: Optional[CrossCheck] = None             # set by run_compiled
     timings: Dict[str, float] = field(default_factory=dict)   # stage -> milliseconds
 
     @property
@@ -88,4 +94,13 @@ def compile_sql(sql: str) -> CompileResult:
             result.plan = build_plan(result.ast)
         with _Timer(result.timings, "optimize"):
             result.optimization = optimize(result.plan)
+    return result
+
+
+def run_compiled(result: CompileResult, conn) -> CompileResult:
+    """Execute a successfully compiled query and cross-check it with SQLite."""
+    with _Timer(result.timings, "execute"):
+        result.execution = execute(result.optimized_plan, conn)
+    with _Timer(result.timings, "sqlite_check"):
+        result.check = cross_check(result.sql, result.execution, conn)
     return result

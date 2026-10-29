@@ -3,10 +3,80 @@ examples.py
 
 Data shared by the demo, the tests and the evaluation. No logic here.
 
-VALID_QUERIES  a corpus of valid SQL covering every supported feature. Used by
-               the interpreter-vs-SQLite differential tests and as the seed
-               queries for the mutation test in evaluate.py.
+BUILTIN_QUESTIONS  the English questions the offline stub LLM can answer
+                   (python main.py --list). `responses` are the pre-written SQL
+                   strings the stub returns for attempt 1, 2, ...; the two
+                   marked `repair` deliberately fail validation first, so the
+                   repair loop runs with no API key.
+VALID_QUERIES      a corpus of valid SQL covering every supported feature. Used
+                   by the interpreter-vs-SQLite differential tests and as the
+                   seed queries for the mutation test in evaluate.py.
+GOLD_QUESTIONS     English questions with a reference ("gold") SQL answer, used
+                   by evaluate.py to score a *live* LLM (only when a key is set).
 """
+
+BUILTIN_QUESTIONS = [
+    {
+        "question": "List the titles and authors of every Dystopian book.",
+        "responses": ["SELECT title, author FROM Books WHERE genre = 'Dystopian'"],
+    },
+    {
+        "question": "How many books are there in each genre?",
+        "responses": ["SELECT genre, COUNT(*) AS book_count FROM Books GROUP BY genre "
+                      "ORDER BY book_count DESC, genre"],
+    },
+    {
+        "question": "For each genre, show the author and how many books there are.",
+        "repair": "S010 - GROUP BY rule",
+        "responses": [
+            # Invalid: 'author' is selected next to COUNT(*) but not grouped.
+            "SELECT genre, author, COUNT(*) FROM Books GROUP BY genre",
+            "SELECT genre, author, COUNT(*) AS book_count FROM Books "
+            "GROUP BY genre, author ORDER BY genre, author",
+        ],
+    },
+    {
+        "question": "Show each loan's id with the member's name and the book title.",
+        "repair": "S003 - ambiguous column across a JOIN",
+        "responses": [
+            # Invalid: 'id' exists in Loans, Members and Books.
+            "SELECT id, name, title FROM Loans JOIN Members ON Loans.member_id = Members.id "
+            "JOIN Books ON Loans.book_id = Books.id",
+            "SELECT Loans.id, name, title FROM Loans JOIN Members ON Loans.member_id = Members.id "
+            "JOIN Books ON Loans.book_id = Books.id ORDER BY Loans.id",
+        ],
+    },
+    {
+        "question": "Which authors have written more than one book?",
+        "responses": ["SELECT author, COUNT(*) AS books FROM Books GROUP BY author "
+                      "HAVING COUNT(*) > 1 ORDER BY books DESC, author"],
+    },
+    {
+        "question": "What are the distinct genres, in alphabetical order?",
+        "responses": ["SELECT DISTINCT genre FROM Books ORDER BY genre"],
+    },
+    {
+        "question": "Which loans are due in June 2024?",
+        "responses": ["SELECT id, due_date FROM Loans "
+                      "WHERE due_date BETWEEN '2024-06-01' AND '2024-06-30' ORDER BY due_date"],
+    },
+    {
+        "question": "Which Fantasy, Satire or Romance books have a title starting with 'The'?",
+        "responses": ["SELECT title, genre FROM Books "
+                      "WHERE genre IN ('Fantasy', 'Satire', 'Romance') AND title LIKE 'The%'"],
+    },
+    {
+        "question": "Which members who joined before 2024 borrowed a Science Fiction book?",
+        "responses": ["SELECT m.name, b.title FROM Members AS m "
+                      "JOIN Loans AS l ON m.id = l.member_id "
+                      "JOIN Books AS b ON l.book_id = b.id "
+                      "WHERE b.genre = 'Science Fiction' AND m.joined_on < '2024-01-01'"],
+    },
+    {
+        "question": "What are the three loans with the latest due dates?",
+        "responses": ["SELECT id, book_id, due_date FROM Loans ORDER BY due_date DESC LIMIT 3"],
+    },
+]
 
 VALID_QUERIES = [
     # -- single table, WHERE, boolean logic ---------------------------------------

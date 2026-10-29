@@ -2,45 +2,66 @@
 
 import unittest
 
-from repair_loop import run_pipeline
+from repair_loop import MAX_ATTEMPTS, run_repair_loop
 
 
 class FakeLLM:
-    """Returns pre-set SQL strings in order and records what it was sent."""
+    """Returns pre-set SQL strings in order and records the history it was given."""
+    mode = "fake"
 
     def __init__(self, *responses):
         self.responses = list(responses)
-        self.calls = []
+        self.histories = []
 
-    def __call__(self, question, schema, previous_sql=None, errors=None):
-        self.calls.append({"previous_sql": previous_sql, "errors": errors})
-        return self.responses.pop(0)
+    def generate(self, question, history):
+        self.histories.append([dict(h) for h in history])
+        return self.responses[min(len(self.histories) - 1, len(self.responses) - 1)]
 
 
 GOOD_SQL = "SELECT title FROM Books WHERE genre = 'Fantasy'"
 
 
-class RepairLoopErrorFeedTests(unittest.TestCase):
-    """All three kinds of compile error must reach the LLM's repair call."""
+class RepairLoopTests(unittest.TestCase):
 
-    def check_repaired(self, bad_sql, expected_code):
-        llm = FakeLLM(bad_sql, GOOD_SQL)
-        result = run_pipeline("q", generate=llm)
+    def test_valid_first_attempt_needs_one_call(self):
+        llm = FakeLLM(GOOD_SQL)
+        result = run_repair_loop("q", llm)
         self.assertTrue(result.success)
-        self.assertEqual(len(result.attempts), 2)
-        sent = llm.calls[1]
-        self.assertEqual(sent["previous_sql"], bad_sql)
-        self.assertEqual(sent["errors"][0].code, expected_code)
-        self.assertIsNotNone(sent["errors"][0].line)
+        self.assertEqual(len(result.attempts), 1)
+        self.assertEqual(llm.histories, [[]])
 
-    def test_lexical_error_is_fed_back(self):
-        self.check_repaired("SELECT title FROM Books WHERE genre = 'Fantasy", "L002")
+    def test_errors_of_all_three_stages_are_fed_back(self):
+        for bad_sql, code in [("SELECT title FROM Books WHERE genre = 'Fantasy", "L002"),
+                              ("SELECT title Books", "P001"),
+                              ("SELECT titel FROM Books", "S002")]:
+            with self.subTest(code=code):
+                llm = FakeLLM(bad_sql, GOOD_SQL)
+                result = run_repair_loop("q", llm)
+                self.assertTrue(result.success)
+                self.assertEqual(len(result.attempts), 2)
+                entry = llm.histories[1][0]
+                self.assertEqual((entry["attempt"], entry["sql"]), (1, bad_sql))
+                error = entry["errors"][0]
+                self.assertEqual(error["code"], code)
+                self.assertIsNotNone(error["line"])
+                self.assertIn("message", error)
 
-    def test_syntax_error_is_fed_back(self):
-        self.check_repaired("SELECT title Books", "P001")
+    def test_history_accumulates_and_attempts_are_bounded(self):
+        llm = FakeLLM("SELECT a FROM Books", "SELECT b FROM Books", "SELECT c FROM Books",
+                      GOOD_SQL)
+        result = run_repair_loop("q", llm)
+        self.assertFalse(result.success)
+        self.assertEqual(MAX_ATTEMPTS, 3)
+        self.assertEqual(len(result.attempts), 3)          # the 4th response is never requested
+        self.assertEqual([len(h) for h in llm.histories], [0, 1, 2])
+        self.assertEqual([h["sql"] for h in llm.histories[2]],
+                         ["SELECT a FROM Books", "SELECT b FROM Books"])
 
-    def test_semantic_error_is_fed_back(self):
-        self.check_repaired("SELECT titel FROM Books", "S002")
+    def test_non_select_from_llm_is_rejected_not_executed(self):
+        llm = FakeLLM("DELETE FROM Books", GOOD_SQL)
+        result = run_repair_loop("q", llm)
+        self.assertEqual(result.attempts[0].errors[0].code, "P002")
+        self.assertTrue(result.success)
 
 
 if __name__ == "__main__":

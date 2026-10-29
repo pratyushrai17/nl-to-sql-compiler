@@ -1,182 +1,228 @@
 """
 llm_client.py
 
-Thin wrapper around the Anthropic API: turns a natural language question
-into a candidate SQL query. repair_loop.py also uses this to ask for a fix,
-by passing the previous invalid SQL plus the semantic/syntax errors.
+The "front end of the front end": turns an English question into candidate
+SQL. Two interchangeable implementations share one interface:
 
-Reads credentials the normal way the Anthropic SDK does (ANTHROPIC_API_KEY
-env var, or another resolvable credential source) — no key handling of our
-own.
+    llm.generate(question, history) -> sql string
 
-STUB MODE: if ANTHROPIC_API_KEY isn't set, generate_sql() automatically
-falls back to STUB_RESPONSES below instead of calling the API or raising.
-This keeps `python main.py` demoable with no key configured at all — useful
-for a live review where network/credentials might not cooperate. A note is
-printed the first time stub mode kicks in so it's never silently pretending
-to be the real LLM. Stub mode only knows the built-in demo questions (see
-tests/examples.py); anything else raises LLMError explaining that a real
-key is needed.
+`history` is the repair loop's list of earlier failed attempts, each a dict
+{"attempt": n, "sql": "...", "errors": [{"code", "message", "line", "col", ...}]}.
+An empty history means "first attempt".
+
+  StubLLM  - offline, no API key. Answers only the built-in questions in
+             examples.BUILTIN_QUESTIONS with pre-written SQL. Two of them
+             return invalid SQL first, so the repair path runs offline too.
+  LiveLLM  - calls the Anthropic API. Used only when ANTHROPIC_API_KEY is set.
+
+get_llm() picks one: live if a key is present (or --live), otherwise stub,
+and returns a notice to print so stub mode is always visible.
+
+Key handling: the API key is read only from the ANTHROPIC_API_KEY
+environment variable, by the Anthropic SDK itself. This module never reads
+the key's value into a variable, never prints or logs it, and never stores
+it anywhere.
 """
 
 import os
 import re
 
-from anthropic import (
-    Anthropic,
-    AuthenticationError,
-    RateLimitError,
-    APIStatusError,
-    APIConnectionError,
-)
+from examples import BUILTIN_QUESTIONS
+from symbol_table import schema_description
 
-MODEL = "claude-sonnet-5"
+DEFAULT_MODEL = "claude-sonnet-5-5"
+MODEL = os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL)
 
-# Pre-written stand-ins for the LLM, used only when no API key is configured.
-# Keyed by the exact question text from tests/examples.py. Each entry has an
-# "initial" response (attempt #1) and, for the one deliberately-invalid
-# example, a "repair" response returned once errors are fed back — so stub
-# mode can still exercise the full validate-then-repair path with no live
-# model in the loop.
-STUB_RESPONSES = {
-    "List the titles and authors of every Dystopian book.": {
-        "initial": "SELECT title, author FROM Books WHERE genre = 'Dystopian'",
-    },
-    "How many books are there in each genre?": {
-        "initial": "SELECT genre, COUNT(*) FROM Books GROUP BY genre",
-    },
-    "For each genre, show the author and how many books there are.": {
-        # Deliberately invalid: 'author' is selected alongside COUNT(*) but is
-        # neither aggregated nor listed in GROUP BY — the same mistake
-        # tests/examples.py seeds directly, reproduced here so stub mode
-        # triggers the repair path on its own too.
-        "initial": "SELECT genre, author, COUNT(*) FROM Books GROUP BY genre",
-        "repair": "SELECT genre, COUNT(*) FROM Books GROUP BY genre",
-    },
+# Approximate list prices in USD per million tokens (input, output), used
+# only for the cost *estimate* in evaluate.py. Check current pricing before
+# relying on these numbers.
+PRICE_PER_MTOK = {
+    "claude-sonnet-5-5": (2.00, 10.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-haiku-5-5": (0.10, 0.50),
 }
 
-_stub_notice_printed = False
+# Models that accept the server-side refusal fallback ("fallbacks": "default").
+FALLBACK_MODELS = {"claude-sonnet-5-5", "claude-opus-5-5", "claude-opus-5", "claude-fable-5-1"}
 
-SYSTEM_PROMPT = """You are a SQL generator for a fixed SQLite schema. Given a natural \
-language question, output exactly one SELECT statement that answers it, and nothing else.
-
-Rules:
-- Only use the tables and columns given in the schema below. Never invent a column or table.
-- Only SELECT statements are allowed (no INSERT/UPDATE/DELETE/DDL).
-- Output raw SQL only: no markdown code fences, no explanation, no comments.
-- Use single quotes for string literals.
-
-Schema:
-{schema}
-"""
+STUB_NOTICE = (
+    "*** STUB MODE: the LLM is simulated. English questions are answered with\n"
+    "*** pre-written SQL for the built-in examples (python main.py --list).\n"
+    "*** Every compiler stage after that is real. Set ANTHROPIC_API_KEY to use a live LLM."
+)
 
 
 class LLMError(Exception):
-    """Raised when the Anthropic API call itself fails (auth, network, etc.)."""
+    """The LLM could not produce SQL (API failure, unknown stub question, ...)."""
 
 
-def _extract_sql(text: str) -> str:
-    """Strip markdown code fences if the model adds them despite instructions."""
+class UnknownQuestionError(LLMError):
+    """Stub mode was asked a question it has no pre-written answer for."""
+
+
+def api_key_available():
+    return bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+
+
+def normalize_question(text):
+    """Lower-case and drop punctuation, so small typing differences still match."""
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
+
+
+# =============================================================================
+# Stub LLM (offline)
+# =============================================================================
+
+class StubLLM:
+    mode = "stub"
+
+    def __init__(self, questions=BUILTIN_QUESTIONS):
+        self.by_question = {normalize_question(q["question"]): q for q in questions}
+        self.calls = 0
+
+    def knows(self, question):
+        return normalize_question(question) in self.by_question
+
+    def generate(self, question, history):
+        self.calls += 1
+        entry = self.by_question.get(normalize_question(question))
+        if entry is None:
+            raise UnknownQuestionError(
+                "The offline stub LLM only knows the 10 built-in questions "
+                "(see: python main.py --list).\n"
+                "To compile your own query without an API key, use:\n"
+                '    python main.py --sql "SELECT ..."\n'
+                "or, in interactive mode, type:  sql> SELECT ...\n"
+                "To ask arbitrary English questions, set ANTHROPIC_API_KEY (live LLM)."
+            )
+        responses = entry["responses"]
+        # Attempt k gets response k; if the stub runs out it repeats its last answer.
+        return responses[min(len(history), len(responses) - 1)]
+
+
+# =============================================================================
+# Live LLM (Anthropic API)
+# =============================================================================
+
+SYSTEM_PROMPT = """You translate questions about a library database into SQLite SELECT \
+statements. Output exactly one SELECT statement and nothing else: no markdown fences, \
+no explanation, no comments.
+
+The SQL is checked by a strict compiler that supports only this subset:
+- SELECT [DISTINCT] ... FROM ... [INNER] JOIN ... ON ... WHERE ... GROUP BY ... HAVING ...
+  ORDER BY ... LIMIT n
+- operators: AND OR NOT, = != <> < > <= >=, + - * /, LIKE, IN (list), BETWEEN
+- aggregates: COUNT(*), COUNT([DISTINCT] col), SUM, AVG, MIN, MAX
+- no subqueries, no LEFT/RIGHT/OUTER joins, no other functions, no NULL
+- every non-aggregated SELECT column must appear in GROUP BY
+- qualify columns that exist in more than one joined table (e.g. Books.id)
+- text values in single quotes
+
+Schema (use only these tables and columns):
+{schema}"""
+
+
+def extract_sql(text):
+    """Strip markdown code fences and a trailing semicolon if the model adds them."""
     text = text.strip()
-    fence_match = re.match(r"^```(?:sql)?\s*(.*?)\s*```$", text, re.DOTALL | re.IGNORECASE)
-    if fence_match:
-        text = fence_match.group(1).strip()
+    fence = re.match(r"^```(?:sql)?\s*(.*?)\s*```$", text, re.DOTALL | re.IGNORECASE)
+    if fence:
+        text = fence.group(1).strip()
     return text.rstrip(";").strip()
 
 
-def generate_sql(question: str, schema_description: str, previous_sql: str = None,
-                  errors=None) -> str:
-    """Generate a candidate SQL query for `question`.
+def build_user_message(question, history):
+    """First attempt: just the question. Repair attempts: the question plus
+    every earlier attempt with its structured compiler errors."""
+    if not history:
+        return f"Question: {question}"
+    lines = [f"Question: {question}", "",
+             "Your earlier SQL failed the compiler's checks. Fix it."]
+    for entry in history:
+        lines.append(f"\nAttempt {entry['attempt']}:\n{entry['sql']}\nErrors:")
+        for err in entry["errors"]:
+            where = f" (line {err['line']}, col {err['col']})" if err.get("line") else ""
+            lines.append(f"- [{err['code']}] {err['stage']} error{where}: {err['message']}")
+    lines.append("\nReturn only the corrected SELECT statement.")
+    return "\n".join(lines)
 
-    On a repair attempt, pass the previous (invalid) SQL and the list of
-    validation error strings from semantic_analyzer/parser; the model is
-    asked to fix that specific query rather than start over blind.
 
-    Falls back to stub mode (see module docstring) when ANTHROPIC_API_KEY
-    is not set, instead of failing.
-    """
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return _generate_sql_stub(question, previous_sql)
-    return _generate_sql_live(question, schema_description, previous_sql, errors)
+class LiveLLM:
+    mode = "live"
 
+    def __init__(self, model=None):
+        import anthropic   # imported here so stub mode never needs the SDK
+        self.anthropic = anthropic
+        self.client = anthropic.Anthropic()   # the SDK reads ANTHROPIC_API_KEY itself
+        self.model = model or MODEL
+        self.calls = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
 
-def _generate_sql_stub(question: str, previous_sql: str = None) -> str:
-    global _stub_notice_printed
-    if not _stub_notice_printed:
-        print(
-            "[llm_client] ANTHROPIC_API_KEY not set - running in STUB MODE: "
-            "returning pre-written example SQL instead of calling the real LLM."
+    def generate(self, question, history):
+        anthropic = self.anthropic
+        request = dict(
+            model=self.model,
+            max_tokens=2048,
+            system=SYSTEM_PROMPT.format(schema=schema_description()),
+            messages=[{"role": "user", "content": build_user_message(question, history)}],
+            output_config={"effort": "low"},   # short, well-specified task
         )
-        _stub_notice_printed = True
+        try:
+            if self.model in FALLBACK_MODELS:
+                # If the model declines, the API retries on a fallback model in the same call.
+                response = self.client.beta.messages.create(
+                    betas=["server-side-fallback-2026-07-01"], fallbacks="default", **request)
+            else:
+                response = self.client.messages.create(**request)
+        except anthropic.AuthenticationError as e:
+            raise LLMError("Anthropic API rejected the credentials - check ANTHROPIC_API_KEY "
+                           f"(status {e.status_code}).") from None
+        except anthropic.NotFoundError:
+            raise LLMError(f"Model '{self.model}' was not found - check ANTHROPIC_MODEL.") from None
+        except anthropic.RateLimitError:
+            raise LLMError("Anthropic API rate limit reached; try again shortly.") from None
+        except anthropic.APIStatusError as e:
+            raise LLMError(f"Anthropic API error (status {e.status_code}).") from None
+        except anthropic.APIConnectionError:
+            raise LLMError("Could not reach the Anthropic API (network problem).") from None
 
-    canned = STUB_RESPONSES.get(question)
-    if canned is None:
-        raise LLMError(
-            f"Stub mode has no pre-written response for the question {question!r}. "
-            "Set ANTHROPIC_API_KEY to use the real LLM for questions outside the "
-            "built-in demo examples."
-        )
+        self.calls += 1
+        self.input_tokens += response.usage.input_tokens
+        self.output_tokens += response.usage.output_tokens
 
-    if previous_sql is None:
-        return canned["initial"]
+        if response.stop_reason == "refusal":
+            raise LLMError("The model declined to answer this question.")
+        text = "".join(block.text for block in response.content if block.type == "text")
+        sql = extract_sql(text)
+        if not sql:
+            raise LLMError("The model returned an empty response instead of SQL.")
+        return sql
 
-    repaired = canned.get("repair")
-    if repaired is None:
-        raise LLMError(
-            f"Stub mode has no pre-written repair for the question {question!r}. "
-            "Set ANTHROPIC_API_KEY to use the real LLM to repair arbitrary errors."
-        )
-    return repaired
+    def estimated_cost(self):
+        price_in, price_out = PRICE_PER_MTOK.get(self.model, (None, None))
+        if price_in is None:
+            return None
+        return (self.input_tokens * price_in + self.output_tokens * price_out) / 1_000_000
 
 
-def _generate_sql_live(question: str, schema_description: str, previous_sql: str = None,
-                        errors=None) -> str:
-    system = SYSTEM_PROMPT.format(schema=schema_description)
+# =============================================================================
+# Choosing an implementation
+# =============================================================================
 
-    if previous_sql is None:
-        user_message = f"Question: {question}"
-    else:
-        error_list = "\n".join(f"- {e}" for e in (errors or []))
-        user_message = (
-            f"Question: {question}\n\n"
-            f"Your previous SQL was invalid:\n{previous_sql}\n\n"
-            f"Validation errors:\n{error_list}\n\n"
-            f"Fix the query so it answers the question and passes validation."
-        )
-
-    try:
-        client = Anthropic()
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=512,
-            system=system,
-            output_config={"effort": "low"},
-            messages=[{"role": "user", "content": user_message}],
-        )
-    except TypeError as e:
-        # The SDK raises a plain TypeError (not AuthenticationError) when no
-        # credential source resolves at all, e.g. ANTHROPIC_API_KEY is unset.
-        # A bad-but-present key instead reaches AuthenticationError below.
-        if "authentication" not in str(e).lower():
-            raise
-        raise LLMError(
-            "No Anthropic credentials found - set the ANTHROPIC_API_KEY environment "
-            f"variable. ({e})"
-        ) from e
-    except AuthenticationError as e:
-        raise LLMError(
-            "Anthropic API authentication failed - check that ANTHROPIC_API_KEY is set "
-            f"correctly. ({e})"
-        ) from e
-    except RateLimitError as e:
-        raise LLMError(f"Anthropic API rate limit hit: {e}") from e
-    except APIConnectionError as e:
-        raise LLMError(f"Could not reach the Anthropic API (network issue): {e}") from e
-    except APIStatusError as e:
-        raise LLMError(f"Anthropic API returned an error: {e}") from e
-
-    text = "".join(block.text for block in response.content if block.type == "text")
-    sql = _extract_sql(text)
-    if not sql:
-        raise LLMError("The model returned an empty response instead of SQL.")
-    return sql
+def get_llm(force=None):
+    """Return (llm, notice). `force` is None (auto), "stub" or "live".
+    Without an API key, "live" falls back to the stub with an explanation."""
+    if force == "stub":
+        return StubLLM(), STUB_NOTICE
+    if api_key_available():
+        try:
+            return LiveLLM(), f"LIVE MODE: using model {MODEL} via the Anthropic API."
+        except ImportError:
+            return StubLLM(), ("The 'anthropic' package is not installed "
+                               "(pip install -r requirements.txt).\n" + STUB_NOTICE)
+    if force == "live":
+        return StubLLM(), ("--live was requested but ANTHROPIC_API_KEY is not set; "
+                           "falling back.\n" + STUB_NOTICE)
+    return StubLLM(), STUB_NOTICE

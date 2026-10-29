@@ -3,36 +3,36 @@ repair_loop.py
 
 Orchestrates generate -> compile -> (on error) repair for one question:
 
-    LLM generates SQL -> lexer -> parser -> semantic analyzer
-        -> if any stage reports an error, the structured errors (code,
-           message, line/column) are sent back to the LLM, which returns a
-           corrected query -> compile again ... (bounded)
+    attempt 1:  LLM writes SQL  -> lexer -> parser -> semantic analyzer
+    on error:   the structured errors (code, message, line/column) of every
+                failed attempt so far are sent back to the LLM, which returns
+                a corrected query -> compile again
+    stop:       when a query compiles cleanly, or after MAX_ATTEMPTS attempts
 
-Lexical, syntax and semantic errors all take the same path: each compiler
+Lexical, syntax and semantic errors all take the same path: every compiler
 stage reports a CompileError, and the loop does not care which stage it
 came from.
 
-`generate` is the LLM call, passed in so tests can substitute a fake. It is
-called as generate(question, schema, previous_sql=None, errors=None).
+The LLM is passed in as an object with generate(question, history), so the
+same loop runs with the offline StubLLM, the LiveLLM, or a fake in tests.
 
-`seed_sql` lets a caller supply attempt #1 directly instead of asking the
-LLM, so the "fails validation, then gets repaired" path can be demonstrated
-reliably.
+history is a list with one dict per failed attempt:
+    {"attempt": 1, "sql": "SELECT ...", "errors": [CompileError.to_dict(), ...]}
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 from errors import CompileError
-from pipeline import CompileResult, front_end
-from symbol_table import schema_description
+from pipeline import CompileResult, compile_sql
+
+MAX_ATTEMPTS = 3
 
 
 @dataclass
 class Attempt:
     number: int
     sql: str
-    source: str            # where the SQL came from, e.g. "llm" or "llm (repair)"
     compiled: CompileResult
 
     @property
@@ -40,20 +40,16 @@ class Attempt:
         return self.compiled.errors
 
     @property
-    def tokens(self):
-        return self.compiled.tokens
-
-    @property
-    def ast(self):
-        return self.compiled.ast
-
-    @property
     def valid(self) -> bool:
         return self.compiled.ok
 
+    def history_entry(self):
+        return {"attempt": self.number, "sql": self.sql,
+                "errors": [e.to_dict() for e in self.errors]}
+
 
 @dataclass
-class PipelineResult:
+class RepairResult:
     question: str
     attempts: List[Attempt] = field(default_factory=list)
     success: bool = False
@@ -62,32 +58,20 @@ class PipelineResult:
     def final(self) -> Attempt:
         return self.attempts[-1]
 
+    @property
+    def history(self):
+        return [a.history_entry() for a in self.attempts if not a.valid]
 
-def run_pipeline(question: str, max_retries: int = 2, seed_sql: Optional[str] = None,
-                 generate=None) -> PipelineResult:
-    if generate is None:
-        from llm_client import generate_sql as generate
 
-    schema = schema_description()
-    result = PipelineResult(question=question)
-
-    sql = seed_sql
-    source = "seed (simulated bad first attempt)" if seed_sql else "llm"
-
-    for number in range(1, max_retries + 2):   # attempt 1 + up to max_retries repairs
-        if sql is None:
-            sql = generate(question, schema)
-
-        compiled = front_end(sql)
-        result.attempts.append(Attempt(number, sql, source, compiled))
-
+def run_repair_loop(question, llm, max_attempts=MAX_ATTEMPTS) -> RepairResult:
+    """Ask `llm` for SQL and repair it until it compiles (or attempts run out).
+    LLMError from the LLM propagates to the caller."""
+    result = RepairResult(question=question)
+    for number in range(1, max_attempts + 1):
+        sql = llm.generate(question, result.history)
+        compiled = compile_sql(sql)
+        result.attempts.append(Attempt(number, sql, compiled))
         if compiled.ok:
             result.success = True
-            return result
-        if number == max_retries + 1:
-            return result
-
-        sql = generate(question, schema, previous_sql=sql, errors=compiled.errors)
-        source = "llm (repair)"
-
+            break
     return result
