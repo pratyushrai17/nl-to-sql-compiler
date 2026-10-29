@@ -18,10 +18,11 @@ An empty history means "first attempt".
 get_llm() picks one: live if a key is present (or --live), otherwise stub,
 and returns a notice to print so stub mode is always visible.
 
-Key handling: the API key is read only from the ANTHROPIC_API_KEY
-environment variable, by the Anthropic SDK itself. This module never reads
-the key's value into a variable, never prints or logs it, and never stores
-it anywhere.
+Key handling: the API key comes only from the ANTHROPIC_API_KEY environment
+variable and is read by the Anthropic SDK itself. This module only checks
+*whether* it is set (api_key_available returns a bool); it never prints,
+logs or stores the key, and API error messages shown to the user never
+include it.
 """
 
 import os

@@ -93,6 +93,22 @@ this log, `.env.example`, updated `.gitignore` and `requirements.txt`.
 
 **Stage 12: security check.** See the entry below.
 
+### Security check (Stage 12), 2026-10-29
+Scanned for API keys and secrets (Anthropic `sk-ant-...`, generic `sk-...`,
+AWS, GitHub, Slack, Google keys, private-key blocks, and
+`api_key/secret/password/token = "<long value>"` assignments) in:
+* the working tree, including git-ignored files: no `.env` file exists
+  (only `.env.example`, whose key value is empty);
+* every commit on every ref and in the reflog (14 commits), plus
+  unreachable/dangling objects and stashes (none).
+
+Result: **no secret found.** The only pattern matches are the deliberate
+placeholder `"placeholder-not-a-real-key"` in `tests/test_llm_client.py` and
+the documentation placeholder `sk-ant-...` in the Phase 1 README. No file
+that looks like a secret (`.env`, `*.pem`, `*.key`, ...) was ever
+committed. In code, the key's value is only checked for presence
+(`llm_client.api_key_available`) and is otherwise handled by the SDK.
+
 ### Not verified
 * The live Anthropic API path (`LiveLLM`, live evaluation) has not been run
   against the real API: no key was available. Its prompt construction, mode
