@@ -50,8 +50,10 @@ of truth for semantic validation and for the schema description sent to the LLM.
 
 ## Scope
 
-**In scope (across all phases):** `SELECT` statements only — `WHERE`, `JOIN`,
-`GROUP BY`, `ORDER BY`, and aggregates (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`).
+**In scope (across all phases):** `SELECT` statements only — `WHERE`, `INNER JOIN`,
+`GROUP BY`, `HAVING`, `ORDER BY`, `DISTINCT`, `LIMIT`, `LIKE` / `IN` / `BETWEEN`,
+aliases, and aggregates (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`). Full grammar:
+`docs/GRAMMAR.md` (keep it in sync with `parser.py`).
 
 **Out of scope entirely:** `INSERT`, `UPDATE`, `DELETE`, and all DDL.
 
@@ -75,26 +77,40 @@ The live LLM path is optional.
 
 | File                   | Responsibility                                            |
 |------------------------|-----------------------------------------------------------|
-| `lexer.py`             | Tokenizer — SQL source text → token stream                |
+| `lexer.py`             | Hand-written scanner — SQL text → tokens with line/col    |
 | `parser.py`            | Recursive-descent parser — tokens → AST                   |
-| `ast_nodes.py`         | AST node class definitions                                |
-| `symbol_table.py`      | Hardcoded schema (tables / columns / types)               |
-| `semantic_analyzer.py` | Validates AST against the symbol table                    |
-| `llm_client.py`        | Wraps Anthropic API calls for SQL generation              |
-| `repair_loop.py`       | Orchestrates generate → parse → validate → retry          |
-| `db.py`                | In-memory SQLite setup with sample data                   |
+| `ast_nodes.py`         | AST node classes, tree helpers, SQL pretty-printer        |
+| `errors.py`            | Structured `CompileError` (code, message, line, col)      |
+| `symbol_table.py`      | Hardcoded schema (tables / columns / types), query scope  |
+| `semantic_analyzer.py` | Validates and annotates the AST against the symbol table  |
+| `query_plan.py`        | Intermediate code: AST → numbered query plan              |
+| `optimizer.py`         | Constant folding, predicate pushdown, projection removal  |
+| `expr_eval.py`         | Shared expression semantics (3-valued logic, LIKE, ...)   |
+| `executor.py`          | Plan interpreter + cross-check against SQLite             |
+| `pipeline.py`          | Runs and times the stages for one SQL string              |
+| `llm_client.py`        | Stub LLM (offline) and live Anthropic LLM                 |
+| `repair_loop.py`       | Generate → compile → repair (max 3 attempts, history)     |
+| `db.py`                | In-memory read-only SQLite with sample data               |
+| `examples.py`          | Built-in questions, valid-query corpus, gold NL→SQL pairs |
 | `main.py`              | CLI entry point; prints every pipeline stage clearly      |
-| `tests/`               | Example queries used for demonstration                    |
+| `visualize.py`         | Generates the self-contained `demo_output.html`           |
+| `evaluate.py`          | Mutation test, timings, optional live evaluation          |
+| `tests/`               | unittest suite; `tests/run_all.py` writes TEST_RESULTS.md |
+| `docs/`                | GRAMMAR, ARCHITECTURE, VIVA_NOTES, TEST_RESULTS, EVALUATION |
 | `README.md`            | How to run it, what each module does                      |
 
 ## Tech Details
 
 - **Language:** Python (standard library only, plus the `anthropic` SDK).
-- **LLM:** Anthropic API, model `claude-sonnet-5`, via the official `anthropic`
-  Python SDK.
+- **LLM:** Anthropic API via the official `anthropic` Python SDK; the model is
+  read from `ANTHROPIC_MODEL` (default `claude-sonnet-5-5`). Optional: without a
+  key the system falls back to the offline stub LLM automatically.
 - **API key:** read from the `ANTHROPIC_API_KEY` environment variable. Never hardcode
   a key, and never commit one.
-- **Database:** in-memory SQLite (`sqlite3`), seeded with sample rows at startup.
+- **Database:** in-memory SQLite (`sqlite3`), seeded with sample rows at startup,
+  then made read-only. SQLite is storage + a reference oracle; queries are
+  executed by our own plan interpreter.
+- **Tests:** `python -m unittest` (standard library; pytest is not installed).
 
 ## Academic Integrity
 

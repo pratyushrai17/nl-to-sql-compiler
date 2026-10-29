@@ -1,1 +1,4 @@
+# Only needed for the optional live LLM mode (--live / ANTHROPIC_API_KEY set).
+# Everything else - the compiler, the --sql mode, the stub demos, the tests and
+# the evaluation - uses the Python standard library only.
 anthropic>=1.0.0

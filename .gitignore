@@ -1,6 +1,13 @@
+# Python
 __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Secrets - never commit real keys
 .env
+.env.*
+!.env.example
+
+# Databases (the project only uses in-memory SQLite)
 *.db

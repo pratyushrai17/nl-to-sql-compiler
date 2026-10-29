@@ -6,7 +6,7 @@ Generated automatically by `python -m tests.run_all` - do not edit by hand.
 * Python 3.14.3, SQLite 3.50.4, Windows 11
 * Framework: `unittest` (standard library; no extra install)
 * No API key and no network access were used
-* Run time: 1.17 s
+* Run time: 1.27 s
 
 ## Summary: ALL PASSED
 
