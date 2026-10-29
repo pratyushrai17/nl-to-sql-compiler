@@ -38,13 +38,13 @@ Every corpus query was run through all stages 20 times (1040 runs per stage). Wa
 
 | Stage | Runs | Average (ms) | Median (ms) | Max (ms) |
 |-------|-----:|-------------:|------------:|---------:|
-| Lexer | 1040 | 0.0348 | 0.0281 | 0.3756 |
-| Parser | 1040 | 0.0376 | 0.0328 | 0.1679 |
-| Semantic analysis | 1040 | 0.0200 | 0.0159 | 0.8372 |
-| Planner | 1040 | 0.0170 | 0.0141 | 0.0934 |
-| Optimizer | 1040 | 0.1362 | 0.1026 | 2.2835 |
-| Interpreter | 1040 | 0.1009 | 0.0710 | 1.3460 |
-| SQLite cross-check | 1040 | 0.0693 | 0.0556 | 2.1788 |
+| Lexer | 1040 | 0.0358 | 0.0289 | 0.3514 |
+| Parser | 1040 | 0.0391 | 0.0345 | 0.2620 |
+| Semantic analysis | 1040 | 0.0207 | 0.0167 | 0.7818 |
+| Planner | 1040 | 0.0180 | 0.0143 | 0.2336 |
+| Optimizer | 1040 | 0.1394 | 0.1111 | 1.9034 |
+| Interpreter | 1040 | 0.1037 | 0.0746 | 1.0401 |
+| SQLite cross-check | 1040 | 0.0691 | 0.0561 | 0.6119 |
 
 ## 3. Live LLM evaluation
 
