@@ -1,461 +1,330 @@
 """
 visualize.py
 
-Runs the same 3 hardcoded example questions (tests/examples.py) through the
-real pipeline (repair_loop.run_pipeline) and renders the result as a single
-self-contained HTML file (demo_output.html) — tokens as boxes, the AST as an
-actual connected-box tree diagram, validation results, repair attempts side
-by side, and final query results as a table.
+Runs the offline examples through the real pipeline and renders everything
+into ONE self-contained HTML file, demo_output.html (inline CSS, no
+JavaScript, no external files - open it by double-clicking).
 
-No external dependencies: everything (CSS, tree-drawing) is inline, so the
-output file can be opened by double-clicking it — no server, no JS libraries.
+For each built-in English question (always with the stub LLM, so no API key
+is needed) the page shows:
+  * every repair attempt side by side, with its tokens and structured errors
+  * the AST of the final query as a connected-box tree
+  * the query plan before and after optimization, side by side, and the
+    optimizer passes that fired
+  * the interpreter's step-by-step row counts, the result table and the
+    SQLite cross-check
+  * per-stage timings as a small bar chart
 
-Run with:  python visualize.py
+A second section shows direct-SQL examples (the --sql mode), including one
+lexical, one syntax and one semantic error.
+
+Run with:  python visualize.py            (add --no-open to skip opening a browser)
 """
 
 import html
+import sys
 import webbrowser
 from pathlib import Path
 
-from ast_nodes import AggregateCall, LogicalExpr, SelectStatement
-from db import get_connection, run_query
-from repair_loop import run_pipeline
-from tests.examples import EXAMPLES
+from ast_nodes import statement_tree
+from db import get_connection
+from errors import caret_line
+from examples import BUILTIN_QUESTIONS
+from llm_client import StubLLM
+from pipeline import compile_sql, run_compiled
+from repair_loop import run_repair_loop
 
 OUTPUT_PATH = Path(__file__).resolve().parent / "demo_output.html"
 
+STAGE_LABELS = [("lex", "Lexer"), ("parse", "Parser"), ("semantic", "Semantic"),
+                ("plan", "Planner"), ("optimize", "Optimizer"), ("execute", "Interpreter"),
+                ("sqlite_check", "SQLite check")]
 
-# -- AST -> generic tree structure -------------------------------------------------
-#
-# Rather than a generic dataclass dump, this builds a tree shaped like the
-# query itself (SELECT / FROM / JOIN / WHERE / GROUP BY / ORDER BY as
-# top-level branches, WHERE conditions recursing through AND/OR) — closer to
-# how an AST is usually drawn on a whiteboard than a field-by-field dump.
-
-def _node(label, children=None):
-    return {"label": str(label), "children": children or []}
-
-
-def _condition_tree(expr):
-    if isinstance(expr, LogicalExpr):
-        return _node(expr.op, [_condition_tree(expr.left), _condition_tree(expr.right)])
-    return _node(repr(expr))  # a Condition leaf, e.g. "genre = 'Dystopian'"
-
-
-def _select_item_tree(item):
-    if isinstance(item.expr, AggregateCall):
-        agg = item.expr
-        n = _node(f"{agg.func}(...)", [_node(repr(agg.arg))])
-    else:
-        n = _node(repr(item.expr))
-    if item.alias:
-        n["label"] += f" AS {item.alias}"
-    return n
+SHOWCASE_SQL = [
+    ("Constant folding",
+     "SELECT title FROM Books WHERE 1 = 1 AND id > 2 * 3"),
+    ("Predicate pushdown across two joins",
+     "SELECT m.name, b.title FROM Members m JOIN Loans l ON m.id = l.member_id "
+     "JOIN Books b ON l.book_id = b.id WHERE b.genre = 'Fantasy' AND m.id + b.id > 2"),
+    ("Redundant projection removal", "SELECT * FROM Loans LIMIT 3"),
+    ("Lexical error", "SELECT title FROM Books WHERE genre = 'Fantasy"),
+    ("Syntax error", "SELECT title, FROM Books"),
+    ("Non-SELECT statement is rejected", "DROP TABLE Books"),
+    ("Semantic errors", "SELECT titel, COUNT(*) FROM Books WHERE title = 1984"),
+]
 
 
-def _join_tree(join):
-    return _node(f"JOIN {join.table!r}", [_node("ON", [_condition_tree(join.on)])])
-
-
-def ast_to_tree(stmt: SelectStatement):
-    children = [_node("SELECT", [_select_item_tree(i) for i in stmt.select_items])]
-    children.append(_node("FROM", [_node(repr(stmt.from_table))]))
-
-    for join in stmt.joins:
-        children.append(_join_tree(join))
-
-    if stmt.where is not None:
-        children.append(_node("WHERE", [_condition_tree(stmt.where)]))
-
-    if stmt.group_by:
-        children.append(_node("GROUP BY", [_node(repr(c)) for c in stmt.group_by]))
-
-    if stmt.order_by:
-        children.append(_node("ORDER BY", [_node(repr(o)) for o in stmt.order_by]))
-
-    return _node("SelectStatement", children)
-
-
-# -- HTML rendering ----------------------------------------------------------------
-
-def esc(value) -> str:
+def esc(value):
     return html.escape(str(value), quote=True)
 
 
-def render_tree_node(node) -> str:
-    children_html = ""
-    if node["children"]:
-        children_html = "<ul>" + "".join(render_tree_node(c) for c in node["children"]) + "</ul>"
-    return f"<li><span class='tree-node'>{esc(node['label'])}</span>{children_html}</li>"
+# -- small renderers -------------------------------------------------------------------
+
+def render_tree(node):
+    def li(n):
+        kids = "".join(li(c) for c in n["children"])
+        return f"<li><span class='tree-node'>{esc(n['label'])}</span>" + \
+               (f"<ul>{kids}</ul>" if kids else "") + "</li>"
+    return f"<div class='tree-wrap'><ul class='tree'>{li(node)}</ul></div>"
 
 
-def render_tree(root) -> str:
-    return f"<ul class='tree'>{render_tree_node(root)}</ul>"
-
-
-def render_tokens(tokens) -> str:
+def render_tokens(tokens):
     if tokens is None:
-        return "<p class='muted'>(tokenization failed before any tokens were produced)</p>"
-    shown = [t for t in tokens if t.type != "EOF"]
+        return "<p class='muted'>(the lexer stopped before producing tokens)</p>"
     boxes = "".join(
-        f"<div class='token-box'><div class='token-type'>{esc(t.type)}</div>"
-        f"<div class='token-value'>{esc(t.value)}</div></div>"
-        for t in shown
-    )
-    return f"<div class='token-row'>{boxes}</div>"
+        f"<div class='token'><div class='t-type'>{esc(t.type)}</div>"
+        f"<div class='t-val'>{esc(t.value)}</div></div>"
+        for t in tokens if t.type != "EOF")
+    return f"<div class='tokens'>{boxes}</div>"
 
 
-def render_validation(attempt) -> str:
-    if attempt.valid:
-        return "<div class='validation ok'><span class='check'>&#10003;</span> Valid</div>"
-    errors_html = "".join(f"<li>{esc(e)}</li>" for e in attempt.errors)
-    return (
-        "<div class='validation fail'><span class='cross'>&#10007;</span> Invalid"
-        f"<ul class='error-list'>{errors_html}</ul></div>"
-    )
+def render_errors(compiled):
+    if compiled.ok:
+        return "<div class='status ok'>&#10003; Valid</div>"
+    items = []
+    for e in compiled.errors:
+        marker = caret_line(compiled.sql, e.line, e.col)
+        items.append(f"<li><b>[{esc(e.code)}]</b> {esc(e.stage)} error"
+                     f"{esc(e.location())}: {esc(e.message)}"
+                     + (f"<pre class='caret'>{esc(marker)}</pre>" if marker else "") + "</li>")
+    return f"<div class='status fail'>&#10007; Invalid<ul>{''.join(items)}</ul></div>"
 
 
-def render_attempt_card(attempt) -> str:
-    ast_html = render_tree(ast_to_tree(attempt.ast)) if attempt.ast is not None else (
-        "<p class='muted'>(no AST — parsing did not succeed)</p>"
-    )
-    return f"""
-    <div class="attempt-card">
-      <div class="attempt-header">Attempt {attempt.number} <span class="source">({esc(attempt.source)})</span></div>
-      <div class="sql-box">{esc(attempt.sql)}</div>
-      <div class="block-label">Tokens</div>
-      {render_tokens(attempt.tokens)}
-      <div class="block-label">AST</div>
-      <div class="tree-wrap">{ast_html}</div>
-      <div class="block-label">Validation</div>
-      {render_validation(attempt)}
-    </div>
-    """
+def render_plan(plan):
+    return "<pre class='plan'>" + esc(plan) + "</pre>"
 
 
-def render_results_table(columns, rows) -> str:
+def render_table(headers, rows):
     if not rows:
-        return "<p class='muted'>(no rows returned)</p>"
-    head = "".join(f"<th>{esc(c)}</th>" for c in columns)
-    body = "".join(
-        "<tr>" + "".join(f"<td>{esc(v)}</td>" for v in row) + "</tr>"
-        for row in rows
-    )
+        return "<p class='muted'>(no rows)</p>"
+    head = "".join(f"<th>{esc(h)}</th>" for h in headers)
+    body = "".join("<tr>" + "".join(f"<td>{esc('NULL' if v is None else v)}</td>" for v in r)
+                   + "</tr>" for r in rows)
     return f"<table class='results'><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
-def render_example(conn, example, index) -> str:
-    result = run_pipeline(
-        question=example["question"],
-        max_retries=2,
-        seed_sql=example.get("seed_sql"),
-    )
+def render_timings(timings):
+    present = [(key, label, timings[key]) for key, label in STAGE_LABELS if key in timings]
+    longest = max((ms for _, _, ms in present), default=1) or 1
+    rows = "".join(
+        f"<div class='bar-row'><span class='bar-label'>{esc(label)}</span>"
+        f"<span class='bar' style='width:{max(2, 100 * ms / longest):.0f}%'></span>"
+        f"<span class='bar-ms'>{ms:.3f} ms</span></div>"
+        for _, label, ms in present)
+    return f"<div class='bars'>{rows}</div>"
 
-    attempts_html = "".join(render_attempt_card(a) for a in result.attempts)
-    side_by_side_class = "attempts-row multi" if len(result.attempts) > 1 else "attempts-row"
 
-    if result.success:
-        final_sql = result.final.sql
-        columns, rows = run_query(conn, final_sql)
-        outcome_html = f"""
-        <div class="final-sql-box">
-          <div class="block-label">Final validated SQL</div>
-          <div class="sql-box final">{esc(final_sql)}</div>
-        </div>
-        <div class="block-label">Query results</div>
-        {render_results_table(columns, rows)}
-        """
-        badge = "<span class='badge ok'>SUCCESS</span>"
-    else:
-        outcome_html = (
-            "<p class='muted'>Pipeline did not produce a valid query "
-            f"after {len(result.attempts)} attempt(s).</p>"
-        )
-        badge = "<span class='badge fail'>FAILED</span>"
-
+def render_compiled(compiled):
+    """AST, plans, passes, execution and cross-check for a valid query."""
+    opt = compiled.optimization
+    passes = "".join(
+        f"<li><b>{esc(p.name)}</b>: " + ("<span class='fired'>fired</span>" if p.fired
+                                          else "<span class='muted'>no change</span>")
+        + "".join(f"<div class='note'>{esc(n)}</div>" for n in p.notes) + "</li>"
+        for p in opt.passes)
+    trace = "".join(f"<tr><td><code>{esc(s.step)}</code></td><td>{s.rows_out}</td></tr>"
+                    for s in compiled.execution.trace)
+    check = compiled.check
+    badge = ("<span class='badge ok'>MATCH</span>" if check.match
+             else "<span class='badge fail'>MISMATCH - BUG</span>")
     return f"""
-    <section class="example" id="example-{index}">
-      <h2>Example {index} {badge}</h2>
-      <div class="question">&ldquo;{esc(example['question'])}&rdquo;</div>
-      <div class="{side_by_side_class}">{attempts_html}</div>
-      {outcome_html}
-    </section>
+      <div class='label'>Abstract syntax tree</div>
+      {render_tree(statement_tree(compiled.ast))}
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div>{render_plan(opt.before)}</div>
+        <div><div class='label'>Optimized plan</div>{render_plan(opt.after)}</div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'>{passes}</ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody>{trace}</tbody></table></div>
+        <div><div class='label'>Per-stage timings</div>{render_timings(compiled.timings)}</div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      {render_table(compiled.execution.headers, compiled.execution.rows)}
+      <p class='check'>Cross-check vs SQLite: {badge} <span class='muted'>{esc(check.detail)}</span></p>
     """
+
+
+# -- sections -------------------------------------------------------------------------
+
+def render_example(n, entry, conn):
+    question = entry["question"]
+    result = run_repair_loop(question, StubLLM())
+    cards = "".join(f"""
+      <div class='card'>
+        <div class='card-head'>Attempt {a.number} <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>{esc(a.sql)}</pre>
+        <div class='label'>Tokens</div>{render_tokens(a.compiled.tokens)}
+        <div class='label'>Validation</div>{render_errors(a.compiled)}
+        {"<p class='muted'>&rarr; errors (code, message, line/col) sent back to the LLM</p>"
+         if not a.valid else ""}
+      </div>""" for a in result.attempts)
+
+    body = "<p class='muted'>No valid SQL was produced.</p>"
+    if result.success:
+        compiled = run_compiled(compile_sql(result.final.sql), conn)
+        body = render_compiled(compiled)
+    status = "<span class='badge ok'>SUCCESS</span>" if result.success else \
+        "<span class='badge fail'>FAILED</span>"
+    repaired = f" <span class='badge warn'>repaired: {esc(entry['repair'])}</span>" \
+        if entry.get("repair") else ""
+    return f"""
+    <section class='example' id='ex-{n}'>
+      <h2>Example {n} {status}{repaired}</h2>
+      <div class='question'>&ldquo;{esc(question)}&rdquo;</div>
+      <div class='attempts{" multi" if len(result.attempts) > 1 else ""}'>{cards}</div>
+      {body}
+    </section>"""
+
+
+def render_showcase(n, title, sql, conn):
+    compiled = compile_sql(sql)
+    if compiled.ok:
+        run_compiled(compiled, conn)
+        body = render_compiled(compiled)
+    else:
+        body = render_errors(compiled)
+    return f"""
+    <section class='example' id='sql-{n}'>
+      <h2>{esc(title)}</h2>
+      <pre class='sql'>python main.py --sql "{esc(sql)}"</pre>
+      <div class='label'>Tokens</div>{render_tokens(compiled.tokens)}
+      {body}
+    </section>"""
 
 
 CSS = """
 :root {
-  color-scheme: light;
-  --bg: #f4f6f8;
-  --card-bg: #ffffff;
-  --border: #d7dce1;
-  --text: #1f2937;
-  --muted: #6b7280;
-  --accent: #2563eb;
-  --ok-bg: #e8f5e9;
-  --ok-fg: #2e7d32;
-  --fail-bg: #fdecea;
-  --fail-fg: #c62828;
+  --bg: #f4f6f8; --card: #ffffff; --soft: #f9fafb; --border: #d7dce1; --text: #1f2937;
+  --muted: #6b7280; --accent: #2563eb; --code-bg: #0f172a; --code-fg: #e2e8f0;
+  --ok-bg: #e8f5e9; --ok-fg: #2e7d32; --fail-bg: #fdecea; --fail-fg: #c62828;
+  --warn-bg: #fff4e5; --warn-fg: #9a5b00; --line: #9ca3af;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --card: #1a1f25; --soft: #20262d; --border: #333b44; --text: #e5e7eb;
+    --muted: #9ca3af; --accent: #60a5fa; --code-bg: #0b0f14; --code-fg: #e2e8f0;
+    --ok-bg: #12301a; --ok-fg: #7ee08f; --fail-bg: #3a1515; --fail-fg: #ff8a80;
+    --warn-bg: #3a2a10; --warn-fg: #ffc46b; --line: #6b7280;
+  }
 }
 * { box-sizing: border-box; }
-body {
-  margin: 0;
-  padding: 24px 16px 64px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-}
-.page-title { text-align: center; margin: 0 0 4px; font-size: 28px; }
-.page-subtitle { text-align: center; color: var(--muted); margin: 0 0 24px; }
-.toc {
-  max-width: 720px;
-  margin: 0 auto 40px;
-  display: flex;
-  justify-content: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.toc a {
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 600;
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--card-bg);
-}
-.toc a:hover { background: #eef2ff; }
-
-.example {
-  max-width: 1100px;
-  margin: 0 auto 56px;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 24px 28px 32px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-.example h2 { margin-top: 0; display: flex; align-items: center; gap: 12px; }
-.badge {
-  font-size: 12px;
-  font-weight: 700;
-  padding: 3px 10px;
-  border-radius: 12px;
-  letter-spacing: 0.03em;
-}
+body { margin: 0; padding: 24px 16px 64px; background: var(--bg); color: var(--text);
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; }
+h1 { text-align: center; margin: 0 0 4px; font-size: 28px; }
+.subtitle { text-align: center; color: var(--muted); margin: 0 0 20px; }
+h2.part { max-width: 1100px; margin: 40px auto 16px; font-size: 22px; }
+nav { max-width: 1100px; margin: 0 auto 32px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+nav a { color: var(--accent); text-decoration: none; font-weight: 600; font-size: 14px;
+  padding: 4px 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
+.example { max-width: 1100px; margin: 0 auto 40px; background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 20px 24px 28px; }
+.example h2 { margin-top: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 20px; }
+.question { font-size: 17px; font-style: italic; margin: 4px 0 20px; padding: 10px 14px;
+  background: var(--soft); border-left: 4px solid var(--accent); border-radius: 4px; }
+.badge { font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: 12px; }
 .badge.ok { background: var(--ok-bg); color: var(--ok-fg); }
 .badge.fail { background: var(--fail-bg); color: var(--fail-fg); }
-
-.question {
-  font-size: 18px;
-  font-style: italic;
-  color: #374151;
-  margin: 4px 0 24px;
-  padding: 12px 16px;
-  background: #f9fafb;
-  border-left: 4px solid var(--accent);
-  border-radius: 4px;
-}
-
-.attempts-row {
-  display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
-  margin-bottom: 20px;
-}
-.attempts-row.multi .attempt-card { flex: 1 1 420px; }
-.attempts-row:not(.multi) .attempt-card { flex: 1 1 100%; }
-
-.attempt-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px 18px;
-  background: #fcfcfd;
-}
-.attempt-header { font-weight: 700; margin-bottom: 10px; }
-.attempt-header .source { font-weight: 400; color: var(--muted); font-size: 13px; }
-
-.block-label {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  margin: 14px 0 6px;
-  font-weight: 700;
-}
-.sql-box {
-  font-family: "Consolas", "Menlo", monospace;
-  font-size: 14px;
-  background: #0f172a;
-  color: #e2e8f0;
-  padding: 10px 14px;
-  border-radius: 6px;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.sql-box.final { background: #14532d; color: #ecfdf5; }
-
-.token-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.token-box {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
-  padding: 4px 8px;
-  text-align: center;
-  min-width: 44px;
-}
-.token-type {
-  font-size: 10px;
-  color: var(--accent);
-  font-weight: 700;
-  text-transform: uppercase;
-}
-.token-value {
-  font-family: monospace;
-  font-size: 13px;
-  word-break: break-word;
-}
-
-.validation {
-  display: inline-flex;
-  flex-direction: column;
-  padding: 8px 14px;
-  border-radius: 6px;
-  font-weight: 600;
-}
-.validation.ok { background: var(--ok-bg); color: var(--ok-fg); }
-.validation.fail { background: var(--fail-bg); color: var(--fail-fg); }
-.validation .check, .validation .cross { margin-right: 6px; }
-.error-list { margin: 8px 0 0; padding-left: 20px; font-weight: 400; font-size: 13px; }
-
-.final-sql-box { margin-top: 8px; }
-
-table.results {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 14px;
-  margin-top: 6px;
-}
-table.results th, table.results td {
-  border: 1px solid var(--border);
-  padding: 6px 10px;
-  text-align: left;
-}
-table.results th { background: #f3f4f6; }
-table.results tr:nth-child(even) td { background: #fafafa; }
-
-.muted { color: var(--muted); font-style: italic; }
-
-/* -- pure-CSS connected-box tree ------------------------------------------- */
-.tree-wrap { overflow-x: auto; padding: 8px 0 4px; }
-.tree, .tree ul, .tree li {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  position: relative;
-}
-.tree {
-  display: inline-flex;
-  justify-content: center;
-  padding-top: 10px;
-  min-width: 100%;
-}
-.tree ul {
-  display: flex;
-  padding-top: 20px;
-  position: relative;
-}
-.tree li {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 20px 10px 0 10px;
-  position: relative;
-}
-.tree li::before, .tree li::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 50%;
-  width: 50%;
-  height: 20px;
-  border-top: 2px solid #9ca3af;
-}
-.tree li::after { right: auto; left: 50%; border-left: 2px solid #9ca3af; }
+.badge.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.attempts { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 8px; }
+.attempts .card { flex: 1 1 100%; min-width: 0; }
+.attempts.multi .card { flex: 1 1 420px; }
+.card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; background: var(--soft); }
+.card-head { font-weight: 700; margin-bottom: 8px; }
+.label { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+  margin: 16px 0 6px; font-weight: 700; }
+pre { margin: 0; font-family: Consolas, Menlo, monospace; font-size: 13px; }
+pre.sql, pre.plan { background: var(--code-bg); color: var(--code-fg); padding: 10px 14px;
+  border-radius: 6px; white-space: pre-wrap; word-break: break-word; overflow-x: auto; }
+pre.caret { color: var(--fail-fg); margin-top: 4px; white-space: pre; overflow-x: auto; }
+.tokens { display: flex; flex-wrap: wrap; gap: 5px; }
+.token { border: 1px solid var(--border); border-radius: 5px; background: var(--card);
+  padding: 2px 7px; text-align: center; min-width: 40px; }
+.t-type { font-size: 10px; color: var(--accent); font-weight: 700; }
+.t-val { font-family: monospace; font-size: 12px; word-break: break-word; }
+.status { display: block; padding: 8px 12px; border-radius: 6px; font-weight: 600; }
+.status.ok { background: var(--ok-bg); color: var(--ok-fg); }
+.status.fail { background: var(--fail-bg); color: var(--fail-fg); }
+.status ul { margin: 6px 0 0; padding-left: 18px; font-weight: 400; font-size: 13px; }
+.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.two-col > div { min-width: 0; }
+ul.passes { margin: 0; padding-left: 20px; font-size: 14px; }
+.fired { color: var(--ok-fg); font-weight: 700; }
+.note { font-family: monospace; font-size: 12px; color: var(--muted); margin-left: 8px; }
+table.results { border-collapse: collapse; width: 100%; font-size: 13px; display: block; overflow-x: auto; }
+table.results th, table.results td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
+table.results th { background: var(--soft); }
+table.trace code { font-size: 12px; }
+.check { margin: 12px 0 0; }
+.muted { color: var(--muted); font-style: italic; font-weight: 400; }
+.bars { font-size: 12px; }
+.bar-row { display: grid; grid-template-columns: 90px 1fr 80px; align-items: center; gap: 8px; margin: 3px 0; }
+.bar { height: 10px; background: var(--accent); border-radius: 3px; display: block; }
+.bar-ms { font-family: monospace; color: var(--muted); text-align: right; }
+.tree-wrap { overflow-x: auto; padding: 6px 0; }
+.tree, .tree ul, .tree li { list-style: none; margin: 0; padding: 0; position: relative; }
+.tree { display: inline-flex; justify-content: center; min-width: 100%; }
+.tree ul { display: flex; padding-top: 18px; position: relative; }
+.tree li { display: flex; flex-direction: column; align-items: center; padding: 18px 6px 0; position: relative; }
+.tree li::before, .tree li::after { content: ''; position: absolute; top: 0; right: 50%; width: 50%;
+  height: 18px; border-top: 2px solid var(--line); }
+.tree li::after { right: auto; left: 50%; border-left: 2px solid var(--line); }
 .tree li:only-child::after, .tree li:only-child::before { display: none; }
 .tree li:only-child { padding-top: 0; }
-.tree li:first-child::before { border: 0 none; }
-.tree li:last-child::after { border: 0 none; }
-.tree li:last-child::before { border-right: 2px solid #9ca3af; border-radius: 0 6px 0 0; }
+.tree li:first-child::before, .tree li:last-child::after { border: 0 none; }
+.tree li:last-child::before { border-right: 2px solid var(--line); border-radius: 0 6px 0 0; }
 .tree li:first-child::after { border-radius: 6px 0 0 0; }
-.tree ul ul::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 50%;
-  border-left: 2px solid #9ca3af;
-  width: 0;
-  height: 20px;
-}
-.tree li .tree-node {
-  border: 1px solid #9ca3af;
-  border-radius: 5px;
-  background: #fff;
-  padding: 5px 10px;
-  font-family: monospace;
-  font-size: 12px;
-  white-space: nowrap;
-  display: inline-block;
-}
+.tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; border-left: 2px solid var(--line);
+  width: 0; height: 18px; }
+.tree-node { border: 1px solid var(--line); border-radius: 5px; background: var(--card); padding: 3px 8px;
+  font-family: monospace; font-size: 12px; white-space: nowrap; }
 """
 
 
-def build_html(sections_html: str) -> str:
+def build_page(conn):
+    examples = "".join(render_example(n, e, conn) for n, e in enumerate(BUILTIN_QUESTIONS, 1))
+    showcase = "".join(render_showcase(n, t, s, conn) for n, (t, s) in enumerate(SHOWCASE_SQL, 1))
+    nav = "".join(f"<a href='#ex-{n}'>Example {n}</a>" for n in range(1, len(BUILTIN_QUESTIONS) + 1))
+    nav += "".join(f"<a href='#sql-{n}'>{esc(t)}</a>" for n, (t, _) in enumerate(SHOWCASE_SQL, 1))
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>NL to SQL Pipeline Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NL to SQL Compiler Demo</title>
 <style>{CSS}</style>
 </head>
 <body>
-  <h1 class="page-title">NL &rarr; SQL Compiler Pipeline</h1>
-  <p class="page-subtitle">Phase 1 prototype demo &mdash; generated by visualize.py from a live pipeline run</p>
-  <nav class="toc">
-    <a href="#example-1">Example 1</a>
-    <a href="#example-2">Example 2</a>
-    <a href="#example-3">Example 3</a>
-  </nav>
-  {sections_html}
+<h1>NL &rarr; SQL Compiler Pipeline</h1>
+<p class="subtitle">Generated offline by visualize.py (stub LLM, no API key). Lexer, parser,
+semantic analyzer, planner, optimizer and interpreter are all hand-written.</p>
+<nav>{nav}</nav>
+<h2 class="part">Part 1 &mdash; English questions (stub LLM + repair loop)</h2>
+{examples}
+<h2 class="part">Part 2 &mdash; Direct SQL (python main.py --sql)</h2>
+{showcase}
 </body>
 </html>
 """
 
 
-def main():
+def main(open_browser=True):
     conn = get_connection()
-    sections = []
-    for i, example in enumerate(EXAMPLES, start=1):
-        print(f"Running example {i}: {example['question']}")
-        sections.append(render_example(conn, example, i))
-    conn.close()
-
-    html_doc = build_html("".join(sections))
-    OUTPUT_PATH.write_text(html_doc, encoding="utf-8")
-    print(f"\nWrote {OUTPUT_PATH} ({len(html_doc):,} bytes)")
+    try:
+        page = build_page(conn)
+    finally:
+        conn.close()
+    OUTPUT_PATH.write_text(page, encoding="utf-8")
+    print(f"Wrote {OUTPUT_PATH} ({len(page):,} bytes)")
+    if open_browser:
+        try:
+            webbrowser.open(OUTPUT_PATH.as_uri())
+        except Exception:
+            pass   # no browser available - the file is still written
     return OUTPUT_PATH
 
 
 if __name__ == "__main__":
-    path = main()
-    # Open it for convenience; harmless if there's no display available.
-    try:
-        webbrowser.open(path.as_uri())
-    except Exception:
-        pass
+    main(open_browser="--no-open" not in sys.argv)

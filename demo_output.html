@@ -2,333 +2,607 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>NL to SQL Pipeline Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NL to SQL Compiler Demo</title>
 <style>
 :root {
-  color-scheme: light;
-  --bg: #f4f6f8;
-  --card-bg: #ffffff;
-  --border: #d7dce1;
-  --text: #1f2937;
-  --muted: #6b7280;
-  --accent: #2563eb;
-  --ok-bg: #e8f5e9;
-  --ok-fg: #2e7d32;
-  --fail-bg: #fdecea;
-  --fail-fg: #c62828;
+  --bg: #f4f6f8; --card: #ffffff; --soft: #f9fafb; --border: #d7dce1; --text: #1f2937;
+  --muted: #6b7280; --accent: #2563eb; --code-bg: #0f172a; --code-fg: #e2e8f0;
+  --ok-bg: #e8f5e9; --ok-fg: #2e7d32; --fail-bg: #fdecea; --fail-fg: #c62828;
+  --warn-bg: #fff4e5; --warn-fg: #9a5b00; --line: #9ca3af;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --card: #1a1f25; --soft: #20262d; --border: #333b44; --text: #e5e7eb;
+    --muted: #9ca3af; --accent: #60a5fa; --code-bg: #0b0f14; --code-fg: #e2e8f0;
+    --ok-bg: #12301a; --ok-fg: #7ee08f; --fail-bg: #3a1515; --fail-fg: #ff8a80;
+    --warn-bg: #3a2a10; --warn-fg: #ffc46b; --line: #6b7280;
+  }
 }
 * { box-sizing: border-box; }
-body {
-  margin: 0;
-  padding: 24px 16px 64px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-}
-.page-title { text-align: center; margin: 0 0 4px; font-size: 28px; }
-.page-subtitle { text-align: center; color: var(--muted); margin: 0 0 24px; }
-.toc {
-  max-width: 720px;
-  margin: 0 auto 40px;
-  display: flex;
-  justify-content: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.toc a {
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 600;
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--card-bg);
-}
-.toc a:hover { background: #eef2ff; }
-
-.example {
-  max-width: 1100px;
-  margin: 0 auto 56px;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 24px 28px 32px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-.example h2 { margin-top: 0; display: flex; align-items: center; gap: 12px; }
-.badge {
-  font-size: 12px;
-  font-weight: 700;
-  padding: 3px 10px;
-  border-radius: 12px;
-  letter-spacing: 0.03em;
-}
+body { margin: 0; padding: 24px 16px 64px; background: var(--bg); color: var(--text);
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; }
+h1 { text-align: center; margin: 0 0 4px; font-size: 28px; }
+.subtitle { text-align: center; color: var(--muted); margin: 0 0 20px; }
+h2.part { max-width: 1100px; margin: 40px auto 16px; font-size: 22px; }
+nav { max-width: 1100px; margin: 0 auto 32px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+nav a { color: var(--accent); text-decoration: none; font-weight: 600; font-size: 14px;
+  padding: 4px 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
+.example { max-width: 1100px; margin: 0 auto 40px; background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 20px 24px 28px; }
+.example h2 { margin-top: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 20px; }
+.question { font-size: 17px; font-style: italic; margin: 4px 0 20px; padding: 10px 14px;
+  background: var(--soft); border-left: 4px solid var(--accent); border-radius: 4px; }
+.badge { font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: 12px; }
 .badge.ok { background: var(--ok-bg); color: var(--ok-fg); }
 .badge.fail { background: var(--fail-bg); color: var(--fail-fg); }
-
-.question {
-  font-size: 18px;
-  font-style: italic;
-  color: #374151;
-  margin: 4px 0 24px;
-  padding: 12px 16px;
-  background: #f9fafb;
-  border-left: 4px solid var(--accent);
-  border-radius: 4px;
-}
-
-.attempts-row {
-  display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
-  margin-bottom: 20px;
-}
-.attempts-row.multi .attempt-card { flex: 1 1 420px; }
-.attempts-row:not(.multi) .attempt-card { flex: 1 1 100%; }
-
-.attempt-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px 18px;
-  background: #fcfcfd;
-}
-.attempt-header { font-weight: 700; margin-bottom: 10px; }
-.attempt-header .source { font-weight: 400; color: var(--muted); font-size: 13px; }
-
-.block-label {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  margin: 14px 0 6px;
-  font-weight: 700;
-}
-.sql-box {
-  font-family: "Consolas", "Menlo", monospace;
-  font-size: 14px;
-  background: #0f172a;
-  color: #e2e8f0;
-  padding: 10px 14px;
-  border-radius: 6px;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.sql-box.final { background: #14532d; color: #ecfdf5; }
-
-.token-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.token-box {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
-  padding: 4px 8px;
-  text-align: center;
-  min-width: 44px;
-}
-.token-type {
-  font-size: 10px;
-  color: var(--accent);
-  font-weight: 700;
-  text-transform: uppercase;
-}
-.token-value {
-  font-family: monospace;
-  font-size: 13px;
-  word-break: break-word;
-}
-
-.validation {
-  display: inline-flex;
-  flex-direction: column;
-  padding: 8px 14px;
-  border-radius: 6px;
-  font-weight: 600;
-}
-.validation.ok { background: var(--ok-bg); color: var(--ok-fg); }
-.validation.fail { background: var(--fail-bg); color: var(--fail-fg); }
-.validation .check, .validation .cross { margin-right: 6px; }
-.error-list { margin: 8px 0 0; padding-left: 20px; font-weight: 400; font-size: 13px; }
-
-.final-sql-box { margin-top: 8px; }
-
-table.results {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 14px;
-  margin-top: 6px;
-}
-table.results th, table.results td {
-  border: 1px solid var(--border);
-  padding: 6px 10px;
-  text-align: left;
-}
-table.results th { background: #f3f4f6; }
-table.results tr:nth-child(even) td { background: #fafafa; }
-
-.muted { color: var(--muted); font-style: italic; }
-
-/* -- pure-CSS connected-box tree ------------------------------------------- */
-.tree-wrap { overflow-x: auto; padding: 8px 0 4px; }
-.tree, .tree ul, .tree li {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  position: relative;
-}
-.tree {
-  display: inline-flex;
-  justify-content: center;
-  padding-top: 10px;
-  min-width: 100%;
-}
-.tree ul {
-  display: flex;
-  padding-top: 20px;
-  position: relative;
-}
-.tree li {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 20px 10px 0 10px;
-  position: relative;
-}
-.tree li::before, .tree li::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 50%;
-  width: 50%;
-  height: 20px;
-  border-top: 2px solid #9ca3af;
-}
-.tree li::after { right: auto; left: 50%; border-left: 2px solid #9ca3af; }
+.badge.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.attempts { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 8px; }
+.attempts .card { flex: 1 1 100%; min-width: 0; }
+.attempts.multi .card { flex: 1 1 420px; }
+.card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; background: var(--soft); }
+.card-head { font-weight: 700; margin-bottom: 8px; }
+.label { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+  margin: 16px 0 6px; font-weight: 700; }
+pre { margin: 0; font-family: Consolas, Menlo, monospace; font-size: 13px; }
+pre.sql, pre.plan { background: var(--code-bg); color: var(--code-fg); padding: 10px 14px;
+  border-radius: 6px; white-space: pre-wrap; word-break: break-word; overflow-x: auto; }
+pre.caret { color: var(--fail-fg); margin-top: 4px; white-space: pre; overflow-x: auto; }
+.tokens { display: flex; flex-wrap: wrap; gap: 5px; }
+.token { border: 1px solid var(--border); border-radius: 5px; background: var(--card);
+  padding: 2px 7px; text-align: center; min-width: 40px; }
+.t-type { font-size: 10px; color: var(--accent); font-weight: 700; }
+.t-val { font-family: monospace; font-size: 12px; word-break: break-word; }
+.status { display: block; padding: 8px 12px; border-radius: 6px; font-weight: 600; }
+.status.ok { background: var(--ok-bg); color: var(--ok-fg); }
+.status.fail { background: var(--fail-bg); color: var(--fail-fg); }
+.status ul { margin: 6px 0 0; padding-left: 18px; font-weight: 400; font-size: 13px; }
+.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.two-col > div { min-width: 0; }
+ul.passes { margin: 0; padding-left: 20px; font-size: 14px; }
+.fired { color: var(--ok-fg); font-weight: 700; }
+.note { font-family: monospace; font-size: 12px; color: var(--muted); margin-left: 8px; }
+table.results { border-collapse: collapse; width: 100%; font-size: 13px; display: block; overflow-x: auto; }
+table.results th, table.results td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
+table.results th { background: var(--soft); }
+table.trace code { font-size: 12px; }
+.check { margin: 12px 0 0; }
+.muted { color: var(--muted); font-style: italic; font-weight: 400; }
+.bars { font-size: 12px; }
+.bar-row { display: grid; grid-template-columns: 90px 1fr 80px; align-items: center; gap: 8px; margin: 3px 0; }
+.bar { height: 10px; background: var(--accent); border-radius: 3px; display: block; }
+.bar-ms { font-family: monospace; color: var(--muted); text-align: right; }
+.tree-wrap { overflow-x: auto; padding: 6px 0; }
+.tree, .tree ul, .tree li { list-style: none; margin: 0; padding: 0; position: relative; }
+.tree { display: inline-flex; justify-content: center; min-width: 100%; }
+.tree ul { display: flex; padding-top: 18px; position: relative; }
+.tree li { display: flex; flex-direction: column; align-items: center; padding: 18px 6px 0; position: relative; }
+.tree li::before, .tree li::after { content: ''; position: absolute; top: 0; right: 50%; width: 50%;
+  height: 18px; border-top: 2px solid var(--line); }
+.tree li::after { right: auto; left: 50%; border-left: 2px solid var(--line); }
 .tree li:only-child::after, .tree li:only-child::before { display: none; }
 .tree li:only-child { padding-top: 0; }
-.tree li:first-child::before { border: 0 none; }
-.tree li:last-child::after { border: 0 none; }
-.tree li:last-child::before { border-right: 2px solid #9ca3af; border-radius: 0 6px 0 0; }
+.tree li:first-child::before, .tree li:last-child::after { border: 0 none; }
+.tree li:last-child::before { border-right: 2px solid var(--line); border-radius: 0 6px 0 0; }
 .tree li:first-child::after { border-radius: 6px 0 0 0; }
-.tree ul ul::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 50%;
-  border-left: 2px solid #9ca3af;
-  width: 0;
-  height: 20px;
-}
-.tree li .tree-node {
-  border: 1px solid #9ca3af;
-  border-radius: 5px;
-  background: #fff;
-  padding: 5px 10px;
-  font-family: monospace;
-  font-size: 12px;
-  white-space: nowrap;
-  display: inline-block;
-}
+.tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; border-left: 2px solid var(--line);
+  width: 0; height: 18px; }
+.tree-node { border: 1px solid var(--line); border-radius: 5px; background: var(--card); padding: 3px 8px;
+  font-family: monospace; font-size: 12px; white-space: nowrap; }
 </style>
 </head>
 <body>
-  <h1 class="page-title">NL &rarr; SQL Compiler Pipeline</h1>
-  <p class="page-subtitle">Phase 1 prototype demo &mdash; generated by visualize.py from a live pipeline run</p>
-  <nav class="toc">
-    <a href="#example-1">Example 1</a>
-    <a href="#example-2">Example 2</a>
-    <a href="#example-3">Example 3</a>
-  </nav>
-  
-    <section class="example" id="example-1">
+<h1>NL &rarr; SQL Compiler Pipeline</h1>
+<p class="subtitle">Generated offline by visualize.py (stub LLM, no API key). Lexer, parser,
+semantic analyzer, planner, optimizer and interpreter are all hand-written.</p>
+<nav><a href='#ex-1'>Example 1</a><a href='#ex-2'>Example 2</a><a href='#ex-3'>Example 3</a><a href='#ex-4'>Example 4</a><a href='#ex-5'>Example 5</a><a href='#ex-6'>Example 6</a><a href='#ex-7'>Example 7</a><a href='#ex-8'>Example 8</a><a href='#ex-9'>Example 9</a><a href='#ex-10'>Example 10</a><a href='#sql-1'>Constant folding</a><a href='#sql-2'>Predicate pushdown across two joins</a><a href='#sql-3'>Redundant projection removal</a><a href='#sql-4'>Lexical error</a><a href='#sql-5'>Syntax error</a><a href='#sql-6'>Non-SELECT statement is rejected</a><a href='#sql-7'>Semantic errors</a></nav>
+<h2 class="part">Part 1 &mdash; English questions (stub LLM + repair loop)</h2>
+
+    <section class='example' id='ex-1'>
       <h2>Example 1 <span class='badge ok'>SUCCESS</span></h2>
-      <div class="question">&ldquo;List the titles and authors of every Dystopian book.&rdquo;</div>
-      <div class="attempts-row">
-    <div class="attempt-card">
-      <div class="attempt-header">Attempt 1 <span class="source">(llm)</span></div>
-      <div class="sql-box">SELECT title, author FROM Books WHERE genre = &#x27;Dystopian&#x27;</div>
-      <div class="block-label">Tokens</div>
-      <div class='token-row'><div class='token-box'><div class='token-type'>SELECT</div><div class='token-value'>SELECT</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>title</div></div><div class='token-box'><div class='token-type'>COMMA</div><div class='token-value'>,</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>author</div></div><div class='token-box'><div class='token-type'>FROM</div><div class='token-value'>FROM</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>Books</div></div><div class='token-box'><div class='token-type'>WHERE</div><div class='token-value'>WHERE</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>genre</div></div><div class='token-box'><div class='token-type'>EQ</div><div class='token-value'>=</div></div><div class='token-box'><div class='token-type'>STRING</div><div class='token-value'>Dystopian</div></div></div>
-      <div class="block-label">AST</div>
-      <div class="tree-wrap"><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>title</span></li><li><span class='tree-node'>author</span></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Books</span></li></ul></li><li><span class='tree-node'>WHERE</span><ul><li><span class='tree-node'>genre = &#x27;Dystopian&#x27;</span></li></ul></li></ul></li></ul></div>
-      <div class="block-label">Validation</div>
-      <div class='validation ok'><span class='check'>&#10003;</span> Valid</div>
-    </div>
-    </div>
-      
-        <div class="final-sql-box">
-          <div class="block-label">Final validated SQL</div>
-          <div class="sql-box final">SELECT title, author FROM Books WHERE genre = &#x27;Dystopian&#x27;</div>
-        </div>
-        <div class="block-label">Query results</div>
-        <table class='results'><thead><tr><th>title</th><th>author</th></tr></thead><tbody><tr><td>1984</td><td>George Orwell</td></tr><tr><td>Brave New World</td><td>Aldous Huxley</td></tr></tbody></table>
+      <div class='question'>&ldquo;List the titles and authors of every Dystopian book.&rdquo;</div>
+      <div class='attempts'>
+      <div class='card'>
+        <div class='card-head'>Attempt 1 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT title, author FROM Books WHERE genre = &#x27;Dystopian&#x27;</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>title</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>author</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>WHERE</div><div class='t-val'>WHERE</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>STRING</div><div class='t-val'>Dystopian</div></div></div>
+        <div class='label'>Validation</div><div class='status ok'>&#10003; Valid</div>
         
-    </section>
+      </div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>title</span></li><li><span class='tree-node'>author</span></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Books</span></li></ul></li><li><span class='tree-node'>WHERE</span><ul><li><span class='tree-node'>=</span><ul><li><span class='tree-node'>genre</span></li><li><span class='tree-node'>&#x27;Dystopian&#x27;</span></li></ul></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Books
+t2 = FILTER t1 WHERE Books.genre = &#x27;Dystopian&#x27;
+t3 = PROJECT t2 [Books.title, Books.author]</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Books
+t2 = FILTER t1 WHERE Books.genre = &#x27;Dystopian&#x27;
+t3 = PROJECT t2 [Books.title, Books.author]</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='muted'>no change</span></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Books</code></td><td>10</td></tr><tr><td><code>t2 = FILTER t1 WHERE Books.genre = &#x27;Dystopian&#x27;</code></td><td>2</td></tr><tr><td><code>t3 = PROJECT t2 [Books.title, Books.author]</code></td><td>2</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:30%'></span><span class='bar-ms'>0.034 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:38%'></span><span class='bar-ms'>0.044 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:25%'></span><span class='bar-ms'>0.029 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:17%'></span><span class='bar-ms'>0.020 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.116 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:81%'></span><span class='bar-ms'>0.094 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:67%'></span><span class='bar-ms'>0.078 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>title</th><th>author</th></tr></thead><tbody><tr><td>1984</td><td>George Orwell</td></tr><tr><td>Brave New World</td><td>Aldous Huxley</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 2 row(s) (compared as a multiset: no ORDER BY)</span></p>
     
-    <section class="example" id="example-2">
+    </section>
+    <section class='example' id='ex-2'>
       <h2>Example 2 <span class='badge ok'>SUCCESS</span></h2>
-      <div class="question">&ldquo;How many books are there in each genre?&rdquo;</div>
-      <div class="attempts-row">
-    <div class="attempt-card">
-      <div class="attempt-header">Attempt 1 <span class="source">(llm)</span></div>
-      <div class="sql-box">SELECT genre, COUNT(*) FROM Books GROUP BY genre</div>
-      <div class="block-label">Tokens</div>
-      <div class='token-row'><div class='token-box'><div class='token-type'>SELECT</div><div class='token-value'>SELECT</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>genre</div></div><div class='token-box'><div class='token-type'>COMMA</div><div class='token-value'>,</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>COUNT</div></div><div class='token-box'><div class='token-type'>LPAREN</div><div class='token-value'>(</div></div><div class='token-box'><div class='token-type'>STAR</div><div class='token-value'>*</div></div><div class='token-box'><div class='token-type'>RPAREN</div><div class='token-value'>)</div></div><div class='token-box'><div class='token-type'>FROM</div><div class='token-value'>FROM</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>Books</div></div><div class='token-box'><div class='token-type'>GROUP</div><div class='token-value'>GROUP</div></div><div class='token-box'><div class='token-type'>BY</div><div class='token-value'>BY</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>genre</div></div></div>
-      <div class="block-label">AST</div>
-      <div class="tree-wrap"><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>genre</span></li><li><span class='tree-node'>COUNT(...)</span><ul><li><span class='tree-node'>*</span></li></ul></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Books</span></li></ul></li><li><span class='tree-node'>GROUP BY</span><ul><li><span class='tree-node'>genre</span></li></ul></li></ul></li></ul></div>
-      <div class="block-label">Validation</div>
-      <div class='validation ok'><span class='check'>&#10003;</span> Valid</div>
-    </div>
-    </div>
-      
-        <div class="final-sql-box">
-          <div class="block-label">Final validated SQL</div>
-          <div class="sql-box final">SELECT genre, COUNT(*) FROM Books GROUP BY genre</div>
-        </div>
-        <div class="block-label">Query results</div>
-        <table class='results'><thead><tr><th>genre</th><th>COUNT(*)</th></tr></thead><tbody><tr><td>Dystopian</td><td>2</td></tr><tr><td>Fantasy</td><td>2</td></tr><tr><td>Romance</td><td>1</td></tr><tr><td>Satire</td><td>1</td></tr><tr><td>Science Fiction</td><td>2</td></tr></tbody></table>
+      <div class='question'>&ldquo;How many books are there in each genre?&rdquo;</div>
+      <div class='attempts'>
+      <div class='card'>
+        <div class='card-head'>Attempt 1 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT genre, COUNT(*) AS book_count FROM Books GROUP BY genre ORDER BY book_count DESC, genre</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>COUNT</div></div><div class='token'><div class='t-type'>LPAREN</div><div class='t-val'>(</div></div><div class='token'><div class='t-type'>STAR</div><div class='t-val'>*</div></div><div class='token'><div class='t-type'>RPAREN</div><div class='t-val'>)</div></div><div class='token'><div class='t-type'>AS</div><div class='t-val'>AS</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>book_count</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>GROUP</div><div class='t-val'>GROUP</div></div><div class='token'><div class='t-type'>BY</div><div class='t-val'>BY</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>ORDER</div><div class='t-val'>ORDER</div></div><div class='token'><div class='t-type'>BY</div><div class='t-val'>BY</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>book_count</div></div><div class='token'><div class='t-type'>DESC</div><div class='t-val'>DESC</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div></div>
+        <div class='label'>Validation</div><div class='status ok'>&#10003; Valid</div>
         
-    </section>
-    
-    <section class="example" id="example-3">
-      <h2>Example 3 <span class='badge ok'>SUCCESS</span></h2>
-      <div class="question">&ldquo;For each genre, show the author and how many books there are.&rdquo;</div>
-      <div class="attempts-row multi">
-    <div class="attempt-card">
-      <div class="attempt-header">Attempt 1 <span class="source">(seed (simulated bad first attempt))</span></div>
-      <div class="sql-box">SELECT genre, author, COUNT(*) FROM Books GROUP BY genre</div>
-      <div class="block-label">Tokens</div>
-      <div class='token-row'><div class='token-box'><div class='token-type'>SELECT</div><div class='token-value'>SELECT</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>genre</div></div><div class='token-box'><div class='token-type'>COMMA</div><div class='token-value'>,</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>author</div></div><div class='token-box'><div class='token-type'>COMMA</div><div class='token-value'>,</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>COUNT</div></div><div class='token-box'><div class='token-type'>LPAREN</div><div class='token-value'>(</div></div><div class='token-box'><div class='token-type'>STAR</div><div class='token-value'>*</div></div><div class='token-box'><div class='token-type'>RPAREN</div><div class='token-value'>)</div></div><div class='token-box'><div class='token-type'>FROM</div><div class='token-value'>FROM</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>Books</div></div><div class='token-box'><div class='token-type'>GROUP</div><div class='token-value'>GROUP</div></div><div class='token-box'><div class='token-type'>BY</div><div class='token-value'>BY</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>genre</div></div></div>
-      <div class="block-label">AST</div>
-      <div class="tree-wrap"><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>genre</span></li><li><span class='tree-node'>author</span></li><li><span class='tree-node'>COUNT(...)</span><ul><li><span class='tree-node'>*</span></li></ul></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Books</span></li></ul></li><li><span class='tree-node'>GROUP BY</span><ul><li><span class='tree-node'>genre</span></li></ul></li></ul></li></ul></div>
-      <div class="block-label">Validation</div>
-      <div class='validation fail'><span class='cross'>&#10007;</span> Invalid<ul class='error-list'><li>Column &#x27;author&#x27; is selected alongside an aggregate function but does not appear in the GROUP BY clause</li></ul></div>
-    </div>
-    
-    <div class="attempt-card">
-      <div class="attempt-header">Attempt 2 <span class="source">(llm (repair))</span></div>
-      <div class="sql-box">SELECT genre, COUNT(*) FROM Books GROUP BY genre</div>
-      <div class="block-label">Tokens</div>
-      <div class='token-row'><div class='token-box'><div class='token-type'>SELECT</div><div class='token-value'>SELECT</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>genre</div></div><div class='token-box'><div class='token-type'>COMMA</div><div class='token-value'>,</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>COUNT</div></div><div class='token-box'><div class='token-type'>LPAREN</div><div class='token-value'>(</div></div><div class='token-box'><div class='token-type'>STAR</div><div class='token-value'>*</div></div><div class='token-box'><div class='token-type'>RPAREN</div><div class='token-value'>)</div></div><div class='token-box'><div class='token-type'>FROM</div><div class='token-value'>FROM</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>Books</div></div><div class='token-box'><div class='token-type'>GROUP</div><div class='token-value'>GROUP</div></div><div class='token-box'><div class='token-type'>BY</div><div class='token-value'>BY</div></div><div class='token-box'><div class='token-type'>IDENT</div><div class='token-value'>genre</div></div></div>
-      <div class="block-label">AST</div>
-      <div class="tree-wrap"><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>genre</span></li><li><span class='tree-node'>COUNT(...)</span><ul><li><span class='tree-node'>*</span></li></ul></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Books</span></li></ul></li><li><span class='tree-node'>GROUP BY</span><ul><li><span class='tree-node'>genre</span></li></ul></li></ul></li></ul></div>
-      <div class="block-label">Validation</div>
-      <div class='validation ok'><span class='check'>&#10003;</span> Valid</div>
-    </div>
-    </div>
+      </div></div>
       
-        <div class="final-sql-box">
-          <div class="block-label">Final validated SQL</div>
-          <div class="sql-box final">SELECT genre, COUNT(*) FROM Books GROUP BY genre</div>
-        </div>
-        <div class="block-label">Query results</div>
-        <table class='results'><thead><tr><th>genre</th><th>COUNT(*)</th></tr></thead><tbody><tr><td>Dystopian</td><td>2</td></tr><tr><td>Fantasy</td><td>2</td></tr><tr><td>Romance</td><td>1</td></tr><tr><td>Satire</td><td>1</td></tr><tr><td>Science Fiction</td><td>2</td></tr></tbody></table>
-        
-    </section>
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>genre</span></li><li><span class='tree-node'>AS book_count</span><ul><li><span class='tree-node'>COUNT</span><ul><li><span class='tree-node'>*</span></li></ul></li></ul></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Books</span></li></ul></li><li><span class='tree-node'>GROUP BY</span><ul><li><span class='tree-node'>genre</span></li></ul></li><li><span class='tree-node'>ORDER BY</span><ul><li><span class='tree-node'>DESC</span><ul><li><span class='tree-node'>book_count</span></li></ul></li><li><span class='tree-node'>ASC</span><ul><li><span class='tree-node'>genre</span></li></ul></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Books
+t2 = AGGREGATE t1 GROUP BY [Books.genre] COMPUTE [COUNT(*)]
+t3 = SORT t2 BY [COUNT(*) DESC, Books.genre ASC]
+t4 = PROJECT t3 [Books.genre, COUNT(*) AS book_count]</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Books
+t2 = AGGREGATE t1 GROUP BY [Books.genre] COMPUTE [COUNT(*)]
+t3 = SORT t2 BY [COUNT(*) DESC, Books.genre ASC]
+t4 = PROJECT t3 [Books.genre, COUNT(*) AS book_count]</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='muted'>no change</span></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Books</code></td><td>10</td></tr><tr><td><code>t2 = AGGREGATE t1 GROUP BY [Books.genre] COMPUTE [COUNT(*)]</code></td><td>5</td></tr><tr><td><code>t3 = SORT t2 BY [COUNT(*) DESC, Books.genre ASC]</code></td><td>5</td></tr><tr><td><code>t4 = PROJECT t3 [Books.genre, COUNT(*) AS book_count]</code></td><td>5</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:36%'></span><span class='bar-ms'>0.049 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:30%'></span><span class='bar-ms'>0.042 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:16%'></span><span class='bar-ms'>0.022 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:30%'></span><span class='bar-ms'>0.041 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:91%'></span><span class='bar-ms'>0.125 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:83%'></span><span class='bar-ms'>0.114 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.138 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>genre</th><th>book_count</th></tr></thead><tbody><tr><td>Fantasy</td><td>3</td></tr><tr><td>Dystopian</td><td>2</td></tr><tr><td>Romance</td><td>2</td></tr><tr><td>Science Fiction</td><td>2</td></tr><tr><td>Satire</td><td>1</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 5 row(s) in the same ORDER BY order</span></p>
     
+    </section>
+    <section class='example' id='ex-3'>
+      <h2>Example 3 <span class='badge ok'>SUCCESS</span> <span class='badge warn'>repaired: S010 - GROUP BY rule</span></h2>
+      <div class='question'>&ldquo;For each genre, show the author and how many books there are.&rdquo;</div>
+      <div class='attempts multi'>
+      <div class='card'>
+        <div class='card-head'>Attempt 1 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT genre, author, COUNT(*) FROM Books GROUP BY genre</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>author</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>COUNT</div></div><div class='token'><div class='t-type'>LPAREN</div><div class='t-val'>(</div></div><div class='token'><div class='t-type'>STAR</div><div class='t-val'>*</div></div><div class='token'><div class='t-type'>RPAREN</div><div class='t-val'>)</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>GROUP</div><div class='t-val'>GROUP</div></div><div class='token'><div class='t-type'>BY</div><div class='t-val'>BY</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div></div>
+        <div class='label'>Validation</div><div class='status fail'>&#10007; Invalid<ul><li><b>[S010]</b> semantic error at line 1, col 15: Column &#x27;author&#x27; is selected alongside an aggregate but is not in GROUP BY; add it to GROUP BY or wrap it in an aggregate such as COUNT/MIN/MAX<pre class='caret'>SELECT genre, author, COUNT(*) FROM Books GROUP BY genre
+              ^</pre></li></ul></div>
+        <p class='muted'>&rarr; errors (code, message, line/col) sent back to the LLM</p>
+      </div>
+      <div class='card'>
+        <div class='card-head'>Attempt 2 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT genre, author, COUNT(*) AS book_count FROM Books GROUP BY genre, author ORDER BY genre, author</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>author</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>COUNT</div></div><div class='token'><div class='t-type'>LPAREN</div><div class='t-val'>(</div></div><div class='token'><div class='t-type'>STAR</div><div class='t-val'>*</div></div><div class='token'><div class='t-type'>RPAREN</div><div class='t-val'>)</div></div><div class='token'><div class='t-type'>AS</div><div class='t-val'>AS</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>book_count</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>GROUP</div><div class='t-val'>GROUP</div></div><div class='token'><div class='t-type'>BY</div><div class='t-val'>BY</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>author</div></div><div class='token'><div class='t-type'>ORDER</div><div class='t-val'>ORDER</div></div><div class='token'><div class='t-type'>BY</div><div class='t-val'>BY</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>author</div></div></div>
+        <div class='label'>Validation</div><div class='status ok'>&#10003; Valid</div>
+        
+      </div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>genre</span></li><li><span class='tree-node'>author</span></li><li><span class='tree-node'>AS book_count</span><ul><li><span class='tree-node'>COUNT</span><ul><li><span class='tree-node'>*</span></li></ul></li></ul></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Books</span></li></ul></li><li><span class='tree-node'>GROUP BY</span><ul><li><span class='tree-node'>genre</span></li><li><span class='tree-node'>author</span></li></ul></li><li><span class='tree-node'>ORDER BY</span><ul><li><span class='tree-node'>ASC</span><ul><li><span class='tree-node'>genre</span></li></ul></li><li><span class='tree-node'>ASC</span><ul><li><span class='tree-node'>author</span></li></ul></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Books
+t2 = AGGREGATE t1 GROUP BY [Books.genre, Books.author] COMPUTE [COUNT(*)]
+t3 = SORT t2 BY [Books.genre ASC, Books.author ASC]
+t4 = PROJECT t3 [Books.genre, Books.author, COUNT(*) AS book_count]</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Books
+t2 = AGGREGATE t1 GROUP BY [Books.genre, Books.author] COMPUTE [COUNT(*)]
+t3 = SORT t2 BY [Books.genre ASC, Books.author ASC]
+t4 = PROJECT t3 [Books.genre, Books.author, COUNT(*) AS book_count]</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='muted'>no change</span></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Books</code></td><td>10</td></tr><tr><td><code>t2 = AGGREGATE t1 GROUP BY [Books.genre, Books.author] COMPUTE [COUNT(*)]</code></td><td>7</td></tr><tr><td><code>t3 = SORT t2 BY [Books.genre ASC, Books.author ASC]</code></td><td>7</td></tr><tr><td><code>t4 = PROJECT t3 [Books.genre, Books.author, COUNT(*) AS book_count]</code></td><td>7</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:38%'></span><span class='bar-ms'>0.044 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:35%'></span><span class='bar-ms'>0.040 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:16%'></span><span class='bar-ms'>0.019 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:17%'></span><span class='bar-ms'>0.020 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.115 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:93%'></span><span class='bar-ms'>0.107 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:98%'></span><span class='bar-ms'>0.113 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>genre</th><th>author</th><th>book_count</th></tr></thead><tbody><tr><td>Dystopian</td><td>Aldous Huxley</td><td>1</td></tr><tr><td>Dystopian</td><td>George Orwell</td><td>1</td></tr><tr><td>Fantasy</td><td>J.R.R. Tolkien</td><td>3</td></tr><tr><td>Romance</td><td>Jane Austen</td><td>2</td></tr><tr><td>Satire</td><td>George Orwell</td><td>1</td></tr><tr><td>Science Fiction</td><td>Frank Herbert</td><td>1</td></tr><tr><td>Science Fiction</td><td>Isaac Asimov</td><td>1</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 7 row(s) in the same ORDER BY order</span></p>
+    
+    </section>
+    <section class='example' id='ex-4'>
+      <h2>Example 4 <span class='badge ok'>SUCCESS</span> <span class='badge warn'>repaired: S003 - ambiguous column across a JOIN</span></h2>
+      <div class='question'>&ldquo;Show each loan&#x27;s id with the member&#x27;s name and the book title.&rdquo;</div>
+      <div class='attempts multi'>
+      <div class='card'>
+        <div class='card-head'>Attempt 1 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT id, name, title FROM Loans JOIN Members ON Loans.member_id = Members.id JOIN Books ON Loans.book_id = Books.id</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>name</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>title</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>JOIN</div><div class='t-val'>JOIN</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Members</div></div><div class='token'><div class='t-type'>ON</div><div class='t-val'>ON</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>member_id</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Members</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>JOIN</div><div class='t-val'>JOIN</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>ON</div><div class='t-val'>ON</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>book_id</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div></div>
+        <div class='label'>Validation</div><div class='status fail'>&#10007; Invalid<ul><li><b>[S003]</b> semantic error at line 1, col 8: Column &#x27;id&#x27; is ambiguous: it exists in more than one table in scope; qualify it as &#x27;Loans.id&#x27; or &#x27;Members.id&#x27; or &#x27;Books.id&#x27;<pre class='caret'>SELECT id, name, title FROM Loans JOIN Members ON Loans.member_id = Members.id JOIN Books ON Loans.book_id = Books.id
+       ^</pre></li></ul></div>
+        <p class='muted'>&rarr; errors (code, message, line/col) sent back to the LLM</p>
+      </div>
+      <div class='card'>
+        <div class='card-head'>Attempt 2 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT Loans.id, name, title FROM Loans JOIN Members ON Loans.member_id = Members.id JOIN Books ON Loans.book_id = Books.id ORDER BY Loans.id</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>name</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>title</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>JOIN</div><div class='t-val'>JOIN</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Members</div></div><div class='token'><div class='t-type'>ON</div><div class='t-val'>ON</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>member_id</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Members</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>JOIN</div><div class='t-val'>JOIN</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>ON</div><div class='t-val'>ON</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>book_id</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>ORDER</div><div class='t-val'>ORDER</div></div><div class='token'><div class='t-type'>BY</div><div class='t-val'>BY</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div></div>
+        <div class='label'>Validation</div><div class='status ok'>&#10003; Valid</div>
+        
+      </div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>Loans.id</span></li><li><span class='tree-node'>name</span></li><li><span class='tree-node'>title</span></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Loans</span></li></ul></li><li><span class='tree-node'>JOIN Members</span><ul><li><span class='tree-node'>ON</span><ul><li><span class='tree-node'>=</span><ul><li><span class='tree-node'>Loans.member_id</span></li><li><span class='tree-node'>Members.id</span></li></ul></li></ul></li></ul></li><li><span class='tree-node'>JOIN Books</span><ul><li><span class='tree-node'>ON</span><ul><li><span class='tree-node'>=</span><ul><li><span class='tree-node'>Loans.book_id</span></li><li><span class='tree-node'>Books.id</span></li></ul></li></ul></li></ul></li><li><span class='tree-node'>ORDER BY</span><ul><li><span class='tree-node'>ASC</span><ul><li><span class='tree-node'>Loans.id</span></li></ul></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Loans
+t2 = SCAN Members
+t3 = JOIN t1, t2 ON Loans.member_id = Members.id
+t4 = SCAN Books
+t5 = JOIN t3, t4 ON Loans.book_id = Books.id
+t6 = SORT t5 BY [Loans.id ASC]
+t7 = PROJECT t6 [Loans.id, Members.name, Books.title]</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Loans
+t2 = SCAN Members
+t3 = JOIN t1, t2 ON Loans.member_id = Members.id
+t4 = SCAN Books
+t5 = JOIN t3, t4 ON Loans.book_id = Books.id
+t6 = SORT t5 BY [Loans.id ASC]
+t7 = PROJECT t6 [Loans.id, Members.name, Books.title]</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='muted'>no change</span></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Loans</code></td><td>8</td></tr><tr><td><code>t2 = SCAN Members</code></td><td>5</td></tr><tr><td><code>t3 = JOIN t1, t2 ON Loans.member_id = Members.id</code></td><td>8</td></tr><tr><td><code>t4 = SCAN Books</code></td><td>10</td></tr><tr><td><code>t5 = JOIN t3, t4 ON Loans.book_id = Books.id</code></td><td>8</td></tr><tr><td><code>t6 = SORT t5 BY [Loans.id ASC]</code></td><td>8</td></tr><tr><td><code>t7 = PROJECT t6 [Loans.id, Members.name, Books.title]</code></td><td>8</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:11%'></span><span class='bar-ms'>0.082 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:8%'></span><span class='bar-ms'>0.060 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:5%'></span><span class='bar-ms'>0.037 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:3%'></span><span class='bar-ms'>0.026 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:29%'></span><span class='bar-ms'>0.213 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:44%'></span><span class='bar-ms'>0.325 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.743 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>id</th><th>name</th><th>title</th></tr></thead><tbody><tr><td>1</td><td>Alice Rao</td><td>1984</td></tr><tr><td>2</td><td>Ben Chen</td><td>The Hobbit</td></tr><tr><td>3</td><td>Alice Rao</td><td>Dune</td></tr><tr><td>4</td><td>Carla Diaz</td><td>Pride and Prejudice</td></tr><tr><td>5</td><td>Ben Chen</td><td>Dune</td></tr><tr><td>6</td><td>Alice Rao</td><td>Brave New World</td></tr><tr><td>7</td><td>Dev Patel</td><td>The Silmarillion</td></tr><tr><td>8</td><td>Carla Diaz</td><td>1984</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 8 row(s) in the same ORDER BY order</span></p>
+    
+    </section>
+    <section class='example' id='ex-5'>
+      <h2>Example 5 <span class='badge ok'>SUCCESS</span></h2>
+      <div class='question'>&ldquo;Which authors have written more than one book?&rdquo;</div>
+      <div class='attempts'>
+      <div class='card'>
+        <div class='card-head'>Attempt 1 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT author, COUNT(*) AS books FROM Books GROUP BY author HAVING COUNT(*) &gt; 1 ORDER BY books DESC, author</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>author</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>COUNT</div></div><div class='token'><div class='t-type'>LPAREN</div><div class='t-val'>(</div></div><div class='token'><div class='t-type'>STAR</div><div class='t-val'>*</div></div><div class='token'><div class='t-type'>RPAREN</div><div class='t-val'>)</div></div><div class='token'><div class='t-type'>AS</div><div class='t-val'>AS</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>books</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>GROUP</div><div class='t-val'>GROUP</div></div><div class='token'><div class='t-type'>BY</div><div class='t-val'>BY</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>author</div></div><div class='token'><div class='t-type'>HAVING</div><div class='t-val'>HAVING</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>COUNT</div></div><div class='token'><div class='t-type'>LPAREN</div><div class='t-val'>(</div></div><div class='token'><div class='t-type'>STAR</div><div class='t-val'>*</div></div><div class='token'><div class='t-type'>RPAREN</div><div class='t-val'>)</div></div><div class='token'><div class='t-type'>GT</div><div class='t-val'>&gt;</div></div><div class='token'><div class='t-type'>NUMBER</div><div class='t-val'>1</div></div><div class='token'><div class='t-type'>ORDER</div><div class='t-val'>ORDER</div></div><div class='token'><div class='t-type'>BY</div><div class='t-val'>BY</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>books</div></div><div class='token'><div class='t-type'>DESC</div><div class='t-val'>DESC</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>author</div></div></div>
+        <div class='label'>Validation</div><div class='status ok'>&#10003; Valid</div>
+        
+      </div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>author</span></li><li><span class='tree-node'>AS books</span><ul><li><span class='tree-node'>COUNT</span><ul><li><span class='tree-node'>*</span></li></ul></li></ul></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Books</span></li></ul></li><li><span class='tree-node'>GROUP BY</span><ul><li><span class='tree-node'>author</span></li></ul></li><li><span class='tree-node'>HAVING</span><ul><li><span class='tree-node'>&gt;</span><ul><li><span class='tree-node'>COUNT</span><ul><li><span class='tree-node'>*</span></li></ul></li><li><span class='tree-node'>1</span></li></ul></li></ul></li><li><span class='tree-node'>ORDER BY</span><ul><li><span class='tree-node'>DESC</span><ul><li><span class='tree-node'>books</span></li></ul></li><li><span class='tree-node'>ASC</span><ul><li><span class='tree-node'>author</span></li></ul></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Books
+t2 = AGGREGATE t1 GROUP BY [Books.author] COMPUTE [COUNT(*)]
+t3 = HAVING t2 COUNT(*) &gt; 1
+t4 = SORT t3 BY [COUNT(*) DESC, Books.author ASC]
+t5 = PROJECT t4 [Books.author, COUNT(*) AS books]</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Books
+t2 = AGGREGATE t1 GROUP BY [Books.author] COMPUTE [COUNT(*)]
+t3 = HAVING t2 COUNT(*) &gt; 1
+t4 = SORT t3 BY [COUNT(*) DESC, Books.author ASC]
+t5 = PROJECT t4 [Books.author, COUNT(*) AS books]</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='muted'>no change</span></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Books</code></td><td>10</td></tr><tr><td><code>t2 = AGGREGATE t1 GROUP BY [Books.author] COMPUTE [COUNT(*)]</code></td><td>6</td></tr><tr><td><code>t3 = HAVING t2 COUNT(*) &gt; 1</code></td><td>3</td></tr><tr><td><code>t4 = SORT t3 BY [COUNT(*) DESC, Books.author ASC]</code></td><td>3</td></tr><tr><td><code>t5 = PROJECT t4 [Books.author, COUNT(*) AS books]</code></td><td>3</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:47%'></span><span class='bar-ms'>0.068 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:45%'></span><span class='bar-ms'>0.065 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:20%'></span><span class='bar-ms'>0.030 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:32%'></span><span class='bar-ms'>0.047 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.146 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:66%'></span><span class='bar-ms'>0.096 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:81%'></span><span class='bar-ms'>0.117 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>author</th><th>books</th></tr></thead><tbody><tr><td>J.R.R. Tolkien</td><td>3</td></tr><tr><td>George Orwell</td><td>2</td></tr><tr><td>Jane Austen</td><td>2</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 3 row(s) in the same ORDER BY order</span></p>
+    
+    </section>
+    <section class='example' id='ex-6'>
+      <h2>Example 6 <span class='badge ok'>SUCCESS</span></h2>
+      <div class='question'>&ldquo;What are the distinct genres, in alphabetical order?&rdquo;</div>
+      <div class='attempts'>
+      <div class='card'>
+        <div class='card-head'>Attempt 1 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT DISTINCT genre FROM Books ORDER BY genre</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>DISTINCT</div><div class='t-val'>DISTINCT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>ORDER</div><div class='t-val'>ORDER</div></div><div class='token'><div class='t-type'>BY</div><div class='t-val'>BY</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div></div>
+        <div class='label'>Validation</div><div class='status ok'>&#10003; Valid</div>
+        
+      </div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT DISTINCT</span><ul><li><span class='tree-node'>genre</span></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Books</span></li></ul></li><li><span class='tree-node'>ORDER BY</span><ul><li><span class='tree-node'>ASC</span><ul><li><span class='tree-node'>genre</span></li></ul></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Books
+t2 = SORT t1 BY [Books.genre ASC]
+t3 = PROJECT t2 [Books.genre]
+t4 = DISTINCT t3</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Books
+t2 = SORT t1 BY [Books.genre ASC]
+t3 = PROJECT t2 [Books.genre]
+t4 = DISTINCT t3</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='muted'>no change</span></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Books</code></td><td>10</td></tr><tr><td><code>t2 = SORT t1 BY [Books.genre ASC]</code></td><td>10</td></tr><tr><td><code>t3 = PROJECT t2 [Books.genre]</code></td><td>10</td></tr><tr><td><code>t4 = DISTINCT t3</code></td><td>5</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:23%'></span><span class='bar-ms'>0.021 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:28%'></span><span class='bar-ms'>0.025 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:17%'></span><span class='bar-ms'>0.016 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:20%'></span><span class='bar-ms'>0.018 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:90%'></span><span class='bar-ms'>0.081 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.090 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:75%'></span><span class='bar-ms'>0.068 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>genre</th></tr></thead><tbody><tr><td>Dystopian</td></tr><tr><td>Fantasy</td></tr><tr><td>Romance</td></tr><tr><td>Satire</td></tr><tr><td>Science Fiction</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 5 row(s) in the same ORDER BY order</span></p>
+    
+    </section>
+    <section class='example' id='ex-7'>
+      <h2>Example 7 <span class='badge ok'>SUCCESS</span></h2>
+      <div class='question'>&ldquo;Which loans are due in June 2024?&rdquo;</div>
+      <div class='attempts'>
+      <div class='card'>
+        <div class='card-head'>Attempt 1 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT id, due_date FROM Loans WHERE due_date BETWEEN &#x27;2024-06-01&#x27; AND &#x27;2024-06-30&#x27; ORDER BY due_date</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>due_date</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>WHERE</div><div class='t-val'>WHERE</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>due_date</div></div><div class='token'><div class='t-type'>BETWEEN</div><div class='t-val'>BETWEEN</div></div><div class='token'><div class='t-type'>STRING</div><div class='t-val'>2024-06-01</div></div><div class='token'><div class='t-type'>AND</div><div class='t-val'>AND</div></div><div class='token'><div class='t-type'>STRING</div><div class='t-val'>2024-06-30</div></div><div class='token'><div class='t-type'>ORDER</div><div class='t-val'>ORDER</div></div><div class='token'><div class='t-type'>BY</div><div class='t-val'>BY</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>due_date</div></div></div>
+        <div class='label'>Validation</div><div class='status ok'>&#10003; Valid</div>
+        
+      </div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>id</span></li><li><span class='tree-node'>due_date</span></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Loans</span></li></ul></li><li><span class='tree-node'>WHERE</span><ul><li><span class='tree-node'>BETWEEN</span><ul><li><span class='tree-node'>due_date</span></li><li><span class='tree-node'>&#x27;2024-06-01&#x27;</span></li><li><span class='tree-node'>&#x27;2024-06-30&#x27;</span></li></ul></li></ul></li><li><span class='tree-node'>ORDER BY</span><ul><li><span class='tree-node'>ASC</span><ul><li><span class='tree-node'>due_date</span></li></ul></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Loans
+t2 = FILTER t1 WHERE Loans.due_date BETWEEN &#x27;2024-06-01&#x27; AND &#x27;2024-06-30&#x27;
+t3 = SORT t2 BY [Loans.due_date ASC]
+t4 = PROJECT t3 [Loans.id, Loans.due_date]</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Loans
+t2 = FILTER t1 WHERE Loans.due_date BETWEEN &#x27;2024-06-01&#x27; AND &#x27;2024-06-30&#x27;
+t3 = SORT t2 BY [Loans.due_date ASC]
+t4 = PROJECT t3 [Loans.id, Loans.due_date]</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='muted'>no change</span></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Loans</code></td><td>8</td></tr><tr><td><code>t2 = FILTER t1 WHERE Loans.due_date BETWEEN &#x27;2024-06-01&#x27; AND &#x27;2024-06-30&#x27;</code></td><td>3</td></tr><tr><td><code>t3 = SORT t2 BY [Loans.due_date ASC]</code></td><td>3</td></tr><tr><td><code>t4 = PROJECT t3 [Loans.id, Loans.due_date]</code></td><td>3</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:35%'></span><span class='bar-ms'>0.037 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:33%'></span><span class='bar-ms'>0.035 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:17%'></span><span class='bar-ms'>0.018 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:12%'></span><span class='bar-ms'>0.013 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.106 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:61%'></span><span class='bar-ms'>0.065 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:75%'></span><span class='bar-ms'>0.080 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>id</th><th>due_date</th></tr></thead><tbody><tr><td>3</td><td>2024-06-01</td></tr><tr><td>4</td><td>2024-06-15</td></tr><tr><td>5</td><td>2024-06-20</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 3 row(s) in the same ORDER BY order</span></p>
+    
+    </section>
+    <section class='example' id='ex-8'>
+      <h2>Example 8 <span class='badge ok'>SUCCESS</span></h2>
+      <div class='question'>&ldquo;Which Fantasy, Satire or Romance books have a title starting with &#x27;The&#x27;?&rdquo;</div>
+      <div class='attempts'>
+      <div class='card'>
+        <div class='card-head'>Attempt 1 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT title, genre FROM Books WHERE genre IN (&#x27;Fantasy&#x27;, &#x27;Satire&#x27;, &#x27;Romance&#x27;) AND title LIKE &#x27;The%&#x27;</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>title</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>WHERE</div><div class='t-val'>WHERE</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>IN</div><div class='t-val'>IN</div></div><div class='token'><div class='t-type'>LPAREN</div><div class='t-val'>(</div></div><div class='token'><div class='t-type'>STRING</div><div class='t-val'>Fantasy</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>STRING</div><div class='t-val'>Satire</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>STRING</div><div class='t-val'>Romance</div></div><div class='token'><div class='t-type'>RPAREN</div><div class='t-val'>)</div></div><div class='token'><div class='t-type'>AND</div><div class='t-val'>AND</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>title</div></div><div class='token'><div class='t-type'>LIKE</div><div class='t-val'>LIKE</div></div><div class='token'><div class='t-type'>STRING</div><div class='t-val'>The%</div></div></div>
+        <div class='label'>Validation</div><div class='status ok'>&#10003; Valid</div>
+        
+      </div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>title</span></li><li><span class='tree-node'>genre</span></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Books</span></li></ul></li><li><span class='tree-node'>WHERE</span><ul><li><span class='tree-node'>AND</span><ul><li><span class='tree-node'>IN</span><ul><li><span class='tree-node'>genre</span></li><li><span class='tree-node'>list</span><ul><li><span class='tree-node'>&#x27;Fantasy&#x27;</span></li><li><span class='tree-node'>&#x27;Satire&#x27;</span></li><li><span class='tree-node'>&#x27;Romance&#x27;</span></li></ul></li></ul></li><li><span class='tree-node'>LIKE</span><ul><li><span class='tree-node'>title</span></li><li><span class='tree-node'>&#x27;The%&#x27;</span></li></ul></li></ul></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Books
+t2 = FILTER t1 WHERE Books.genre IN (&#x27;Fantasy&#x27;, &#x27;Satire&#x27;, &#x27;Romance&#x27;) AND Books.title LIKE &#x27;The%&#x27;
+t3 = PROJECT t2 [Books.title, Books.genre]</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Books
+t2 = FILTER t1 WHERE Books.genre IN (&#x27;Fantasy&#x27;, &#x27;Satire&#x27;, &#x27;Romance&#x27;) AND Books.title LIKE &#x27;The%&#x27;
+t3 = PROJECT t2 [Books.title, Books.genre]</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='muted'>no change</span></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Books</code></td><td>10</td></tr><tr><td><code>t2 = FILTER t1 WHERE Books.genre IN (&#x27;Fantasy&#x27;, &#x27;Satire&#x27;, &#x27;Romance&#x27;) AND Books.title LIKE &#x27;The%&#x27;</code></td><td>3</td></tr><tr><td><code>t3 = PROJECT t2 [Books.title, Books.genre]</code></td><td>3</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:28%'></span><span class='bar-ms'>0.038 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:28%'></span><span class='bar-ms'>0.039 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:15%'></span><span class='bar-ms'>0.021 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:7%'></span><span class='bar-ms'>0.010 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:92%'></span><span class='bar-ms'>0.128 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.139 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:87%'></span><span class='bar-ms'>0.121 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>title</th><th>genre</th></tr></thead><tbody><tr><td>The Hobbit</td><td>Fantasy</td></tr><tr><td>The Fellowship of the Ring</td><td>Fantasy</td></tr><tr><td>The Silmarillion</td><td>Fantasy</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 3 row(s) (compared as a multiset: no ORDER BY)</span></p>
+    
+    </section>
+    <section class='example' id='ex-9'>
+      <h2>Example 9 <span class='badge ok'>SUCCESS</span></h2>
+      <div class='question'>&ldquo;Which members who joined before 2024 borrowed a Science Fiction book?&rdquo;</div>
+      <div class='attempts'>
+      <div class='card'>
+        <div class='card-head'>Attempt 1 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT m.name, b.title FROM Members AS m JOIN Loans AS l ON m.id = l.member_id JOIN Books AS b ON l.book_id = b.id WHERE b.genre = &#x27;Science Fiction&#x27; AND m.joined_on &lt; &#x27;2024-01-01&#x27;</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>m</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>name</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>b</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>title</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Members</div></div><div class='token'><div class='t-type'>AS</div><div class='t-val'>AS</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>m</div></div><div class='token'><div class='t-type'>JOIN</div><div class='t-val'>JOIN</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>AS</div><div class='t-val'>AS</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>l</div></div><div class='token'><div class='t-type'>ON</div><div class='t-val'>ON</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>m</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>l</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>member_id</div></div><div class='token'><div class='t-type'>JOIN</div><div class='t-val'>JOIN</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>AS</div><div class='t-val'>AS</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>b</div></div><div class='token'><div class='t-type'>ON</div><div class='t-val'>ON</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>l</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>book_id</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>b</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>WHERE</div><div class='t-val'>WHERE</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>b</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>STRING</div><div class='t-val'>Science Fiction</div></div><div class='token'><div class='t-type'>AND</div><div class='t-val'>AND</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>m</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>joined_on</div></div><div class='token'><div class='t-type'>LT</div><div class='t-val'>&lt;</div></div><div class='token'><div class='t-type'>STRING</div><div class='t-val'>2024-01-01</div></div></div>
+        <div class='label'>Validation</div><div class='status ok'>&#10003; Valid</div>
+        
+      </div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>m.name</span></li><li><span class='tree-node'>b.title</span></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Members AS m</span></li></ul></li><li><span class='tree-node'>JOIN Loans AS l</span><ul><li><span class='tree-node'>ON</span><ul><li><span class='tree-node'>=</span><ul><li><span class='tree-node'>m.id</span></li><li><span class='tree-node'>l.member_id</span></li></ul></li></ul></li></ul></li><li><span class='tree-node'>JOIN Books AS b</span><ul><li><span class='tree-node'>ON</span><ul><li><span class='tree-node'>=</span><ul><li><span class='tree-node'>l.book_id</span></li><li><span class='tree-node'>b.id</span></li></ul></li></ul></li></ul></li><li><span class='tree-node'>WHERE</span><ul><li><span class='tree-node'>AND</span><ul><li><span class='tree-node'>=</span><ul><li><span class='tree-node'>b.genre</span></li><li><span class='tree-node'>&#x27;Science Fiction&#x27;</span></li></ul></li><li><span class='tree-node'>&lt;</span><ul><li><span class='tree-node'>m.joined_on</span></li><li><span class='tree-node'>&#x27;2024-01-01&#x27;</span></li></ul></li></ul></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Members AS m
+t2 = SCAN Loans AS l
+t3 = JOIN t1, t2 ON m.id = l.member_id
+t4 = SCAN Books AS b
+t5 = JOIN t3, t4 ON l.book_id = b.id
+t6 = FILTER t5 WHERE b.genre = &#x27;Science Fiction&#x27; AND m.joined_on &lt; &#x27;2024-01-01&#x27;
+t7 = PROJECT t6 [m.name, b.title]</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Members AS m
+t2 = FILTER t1 WHERE m.joined_on &lt; &#x27;2024-01-01&#x27;
+t3 = SCAN Loans AS l
+t4 = JOIN t2, t3 ON m.id = l.member_id
+t5 = SCAN Books AS b
+t6 = FILTER t5 WHERE b.genre = &#x27;Science Fiction&#x27;
+t7 = JOIN t4, t6 ON l.book_id = b.id
+t8 = PROJECT t7 [m.name, b.title]</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='fired'>fired</span><div class='note'>b.genre = &#x27;Science Fiction&#x27;  -&gt;  pushed below the JOIN, directly above SCAN Books AS b</div><div class='note'>m.joined_on &lt; &#x27;2024-01-01&#x27;  -&gt;  pushed below the JOIN, directly above SCAN Members AS m</div></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Members AS m</code></td><td>5</td></tr><tr><td><code>t2 = FILTER t1 WHERE m.joined_on &lt; &#x27;2024-01-01&#x27;</code></td><td>2</td></tr><tr><td><code>t3 = SCAN Loans AS l</code></td><td>8</td></tr><tr><td><code>t4 = JOIN t2, t3 ON m.id = l.member_id</code></td><td>5</td></tr><tr><td><code>t5 = SCAN Books AS b</code></td><td>10</td></tr><tr><td><code>t6 = FILTER t5 WHERE b.genre = &#x27;Science Fiction&#x27;</code></td><td>2</td></tr><tr><td><code>t7 = JOIN t4, t6 ON l.book_id = b.id</code></td><td>2</td></tr><tr><td><code>t8 = PROJECT t7 [m.name, b.title]</code></td><td>2</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:35%'></span><span class='bar-ms'>0.074 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:23%'></span><span class='bar-ms'>0.048 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:15%'></span><span class='bar-ms'>0.031 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:7%'></span><span class='bar-ms'>0.015 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.212 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:85%'></span><span class='bar-ms'>0.181 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:76%'></span><span class='bar-ms'>0.161 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>name</th><th>title</th></tr></thead><tbody><tr><td>Alice Rao</td><td>Dune</td></tr><tr><td>Ben Chen</td><td>Dune</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 2 row(s) (compared as a multiset: no ORDER BY)</span></p>
+    
+    </section>
+    <section class='example' id='ex-10'>
+      <h2>Example 10 <span class='badge ok'>SUCCESS</span></h2>
+      <div class='question'>&ldquo;What are the three loans with the latest due dates?&rdquo;</div>
+      <div class='attempts'>
+      <div class='card'>
+        <div class='card-head'>Attempt 1 <span class='muted'>(stub LLM, pre-written)</span></div>
+        <pre class='sql'>SELECT id, book_id, due_date FROM Loans ORDER BY due_date DESC LIMIT 3</pre>
+        <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>book_id</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>due_date</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>ORDER</div><div class='t-val'>ORDER</div></div><div class='token'><div class='t-type'>BY</div><div class='t-val'>BY</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>due_date</div></div><div class='token'><div class='t-type'>DESC</div><div class='t-val'>DESC</div></div><div class='token'><div class='t-type'>LIMIT</div><div class='t-val'>LIMIT</div></div><div class='token'><div class='t-type'>NUMBER</div><div class='t-val'>3</div></div></div>
+        <div class='label'>Validation</div><div class='status ok'>&#10003; Valid</div>
+        
+      </div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>id</span></li><li><span class='tree-node'>book_id</span></li><li><span class='tree-node'>due_date</span></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Loans</span></li></ul></li><li><span class='tree-node'>ORDER BY</span><ul><li><span class='tree-node'>DESC</span><ul><li><span class='tree-node'>due_date</span></li></ul></li></ul></li><li><span class='tree-node'>LIMIT</span><ul><li><span class='tree-node'>3</span></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Loans
+t2 = SORT t1 BY [Loans.due_date DESC]
+t3 = PROJECT t2 [Loans.id, Loans.book_id, Loans.due_date]
+t4 = LIMIT t3 3</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Loans
+t2 = SORT t1 BY [Loans.due_date DESC]
+t3 = PROJECT t2 [Loans.id, Loans.book_id, Loans.due_date]
+t4 = LIMIT t3 3</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='muted'>no change</span></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Loans</code></td><td>8</td></tr><tr><td><code>t2 = SORT t1 BY [Loans.due_date DESC]</code></td><td>8</td></tr><tr><td><code>t3 = PROJECT t2 [Loans.id, Loans.book_id, Loans.due_date]</code></td><td>8</td></tr><tr><td><code>t4 = LIMIT t3 3</code></td><td>3</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:38%'></span><span class='bar-ms'>0.035 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:36%'></span><span class='bar-ms'>0.034 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:17%'></span><span class='bar-ms'>0.016 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:18%'></span><span class='bar-ms'>0.017 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:92%'></span><span class='bar-ms'>0.085 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:72%'></span><span class='bar-ms'>0.066 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.093 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>id</th><th>book_id</th><th>due_date</th></tr></thead><tbody><tr><td>8</td><td>1</td><td>2024-08-01</td></tr><tr><td>7</td><td>10</td><td>2024-07-15</td></tr><tr><td>6</td><td>3</td><td>2024-07-05</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 3 row(s) in the same ORDER BY order</span></p>
+    
+    </section>
+<h2 class="part">Part 2 &mdash; Direct SQL (python main.py --sql)</h2>
+
+    <section class='example' id='sql-1'>
+      <h2>Constant folding</h2>
+      <pre class='sql'>python main.py --sql "SELECT title FROM Books WHERE 1 = 1 AND id &gt; 2 * 3"</pre>
+      <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>title</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>WHERE</div><div class='t-val'>WHERE</div></div><div class='token'><div class='t-type'>NUMBER</div><div class='t-val'>1</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>NUMBER</div><div class='t-val'>1</div></div><div class='token'><div class='t-type'>AND</div><div class='t-val'>AND</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>GT</div><div class='t-val'>&gt;</div></div><div class='token'><div class='t-type'>NUMBER</div><div class='t-val'>2</div></div><div class='token'><div class='t-type'>STAR</div><div class='t-val'>*</div></div><div class='token'><div class='t-type'>NUMBER</div><div class='t-val'>3</div></div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>title</span></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Books</span></li></ul></li><li><span class='tree-node'>WHERE</span><ul><li><span class='tree-node'>AND</span><ul><li><span class='tree-node'>=</span><ul><li><span class='tree-node'>1</span></li><li><span class='tree-node'>1</span></li></ul></li><li><span class='tree-node'>&gt;</span><ul><li><span class='tree-node'>id</span></li><li><span class='tree-node'>*</span><ul><li><span class='tree-node'>2</span></li><li><span class='tree-node'>3</span></li></ul></li></ul></li></ul></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Books
+t2 = FILTER t1 WHERE 1 = 1 AND Books.id &gt; 2 * 3
+t3 = PROJECT t2 [Books.title]</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Books
+t2 = FILTER t1 WHERE Books.id &gt; 6
+t3 = PROJECT t2 [Books.title]</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='fired'>fired</span><div class='note'>FILTER: 1 = 1 AND Books.id &gt; 2 * 3  -&gt;  Books.id &gt; 6</div></li><li><b>predicate_pushdown</b>: <span class='muted'>no change</span></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Books</code></td><td>10</td></tr><tr><td><code>t2 = FILTER t1 WHERE Books.id &gt; 6</code></td><td>4</td></tr><tr><td><code>t3 = PROJECT t2 [Books.title]</code></td><td>4</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:24%'></span><span class='bar-ms'>0.036 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:25%'></span><span class='bar-ms'>0.038 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:17%'></span><span class='bar-ms'>0.025 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:9%'></span><span class='bar-ms'>0.014 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.151 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:32%'></span><span class='bar-ms'>0.049 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:35%'></span><span class='bar-ms'>0.053 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>title</th></tr></thead><tbody><tr><td>Foundation</td></tr><tr><td>Pride and Prejudice</td></tr><tr><td>Emma</td></tr><tr><td>The Silmarillion</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 4 row(s) (compared as a multiset: no ORDER BY)</span></p>
+    
+    </section>
+    <section class='example' id='sql-2'>
+      <h2>Predicate pushdown across two joins</h2>
+      <pre class='sql'>python main.py --sql "SELECT m.name, b.title FROM Members m JOIN Loans l ON m.id = l.member_id JOIN Books b ON l.book_id = b.id WHERE b.genre = &#x27;Fantasy&#x27; AND m.id + b.id &gt; 2"</pre>
+      <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>m</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>name</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>b</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>title</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Members</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>m</div></div><div class='token'><div class='t-type'>JOIN</div><div class='t-val'>JOIN</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>l</div></div><div class='token'><div class='t-type'>ON</div><div class='t-val'>ON</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>m</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>l</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>member_id</div></div><div class='token'><div class='t-type'>JOIN</div><div class='t-val'>JOIN</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>b</div></div><div class='token'><div class='t-type'>ON</div><div class='t-val'>ON</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>l</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>book_id</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>b</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>WHERE</div><div class='t-val'>WHERE</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>b</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>genre</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>STRING</div><div class='t-val'>Fantasy</div></div><div class='token'><div class='t-type'>AND</div><div class='t-val'>AND</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>m</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>PLUS</div><div class='t-val'>+</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>b</div></div><div class='token'><div class='t-type'>DOT</div><div class='t-val'>.</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>id</div></div><div class='token'><div class='t-type'>GT</div><div class='t-val'>&gt;</div></div><div class='token'><div class='t-type'>NUMBER</div><div class='t-val'>2</div></div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>m.name</span></li><li><span class='tree-node'>b.title</span></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Members AS m</span></li></ul></li><li><span class='tree-node'>JOIN Loans AS l</span><ul><li><span class='tree-node'>ON</span><ul><li><span class='tree-node'>=</span><ul><li><span class='tree-node'>m.id</span></li><li><span class='tree-node'>l.member_id</span></li></ul></li></ul></li></ul></li><li><span class='tree-node'>JOIN Books AS b</span><ul><li><span class='tree-node'>ON</span><ul><li><span class='tree-node'>=</span><ul><li><span class='tree-node'>l.book_id</span></li><li><span class='tree-node'>b.id</span></li></ul></li></ul></li></ul></li><li><span class='tree-node'>WHERE</span><ul><li><span class='tree-node'>AND</span><ul><li><span class='tree-node'>=</span><ul><li><span class='tree-node'>b.genre</span></li><li><span class='tree-node'>&#x27;Fantasy&#x27;</span></li></ul></li><li><span class='tree-node'>&gt;</span><ul><li><span class='tree-node'>+</span><ul><li><span class='tree-node'>m.id</span></li><li><span class='tree-node'>b.id</span></li></ul></li><li><span class='tree-node'>2</span></li></ul></li></ul></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Members AS m
+t2 = SCAN Loans AS l
+t3 = JOIN t1, t2 ON m.id = l.member_id
+t4 = SCAN Books AS b
+t5 = JOIN t3, t4 ON l.book_id = b.id
+t6 = FILTER t5 WHERE b.genre = &#x27;Fantasy&#x27; AND m.id + b.id &gt; 2
+t7 = PROJECT t6 [m.name, b.title]</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Members AS m
+t2 = SCAN Loans AS l
+t3 = JOIN t1, t2 ON m.id = l.member_id
+t4 = SCAN Books AS b
+t5 = FILTER t4 WHERE b.genre = &#x27;Fantasy&#x27;
+t6 = JOIN t3, t5 ON l.book_id = b.id AND m.id + b.id &gt; 2
+t7 = PROJECT t6 [m.name, b.title]</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='fired'>fired</span><div class='note'>b.genre = &#x27;Fantasy&#x27;  -&gt;  pushed below the JOIN, directly above SCAN Books AS b</div><div class='note'>m.id + b.id &gt; 2  -&gt;  merged into JOIN ON (uses both sides)</div></li><li><b>remove_redundant_projection</b>: <span class='muted'>no change</span></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Members AS m</code></td><td>5</td></tr><tr><td><code>t2 = SCAN Loans AS l</code></td><td>8</td></tr><tr><td><code>t3 = JOIN t1, t2 ON m.id = l.member_id</code></td><td>8</td></tr><tr><td><code>t4 = SCAN Books AS b</code></td><td>10</td></tr><tr><td><code>t5 = FILTER t4 WHERE b.genre = &#x27;Fantasy&#x27;</code></td><td>3</td></tr><tr><td><code>t6 = JOIN t3, t5 ON l.book_id = b.id AND m.id + b.id &gt; 2</code></td><td>2</td></tr><tr><td><code>t7 = PROJECT t6 [m.name, b.title]</code></td><td>2</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:30%'></span><span class='bar-ms'>0.070 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:21%'></span><span class='bar-ms'>0.049 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:14%'></span><span class='bar-ms'>0.033 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:7%'></span><span class='bar-ms'>0.015 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.231 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:92%'></span><span class='bar-ms'>0.214 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:63%'></span><span class='bar-ms'>0.145 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>name</th><th>title</th></tr></thead><tbody><tr><td>Ben Chen</td><td>The Hobbit</td></tr><tr><td>Dev Patel</td><td>The Silmarillion</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 2 row(s) (compared as a multiset: no ORDER BY)</span></p>
+    
+    </section>
+    <section class='example' id='sql-3'>
+      <h2>Redundant projection removal</h2>
+      <pre class='sql'>python main.py --sql "SELECT * FROM Loans LIMIT 3"</pre>
+      <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>STAR</div><div class='t-val'>*</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Loans</div></div><div class='token'><div class='t-type'>LIMIT</div><div class='t-val'>LIMIT</div></div><div class='token'><div class='t-type'>NUMBER</div><div class='t-val'>3</div></div></div>
+      
+      <div class='label'>Abstract syntax tree</div>
+      <div class='tree-wrap'><ul class='tree'><li><span class='tree-node'>SelectStatement</span><ul><li><span class='tree-node'>SELECT</span><ul><li><span class='tree-node'>*</span></li></ul></li><li><span class='tree-node'>FROM</span><ul><li><span class='tree-node'>Loans</span></li></ul></li><li><span class='tree-node'>LIMIT</span><ul><li><span class='tree-node'>3</span></li></ul></li></ul></li></ul></div>
+      <div class='two-col'>
+        <div><div class='label'>Query plan (before optimization)</div><pre class='plan'>t1 = SCAN Loans
+t2 = PROJECT t1 [Loans.id, Loans.book_id, Loans.member_id, Loans.due_date]
+t3 = LIMIT t2 3</pre></div>
+        <div><div class='label'>Optimized plan</div><pre class='plan'>t1 = SCAN Loans
+t2 = LIMIT t1 3</pre></div>
+      </div>
+      <div class='label'>Optimizer passes</div><ul class='passes'><li><b>constant_folding</b>: <span class='muted'>no change</span></li><li><b>predicate_pushdown</b>: <span class='muted'>no change</span></li><li><b>remove_redundant_projection</b>: <span class='fired'>fired</span><div class='note'>PROJECT outputs exactly the columns of its input (SCAN Loans), so it was removed</div></li></ul>
+      <div class='two-col'>
+        <div><div class='label'>Interpreter trace</div>
+          <table class='results trace'><thead><tr><th>step</th><th>rows out</th></tr></thead>
+          <tbody><tr><td><code>t1 = SCAN Loans</code></td><td>8</td></tr><tr><td><code>t2 = LIMIT t1 3</code></td><td>3</td></tr></tbody></table></div>
+        <div><div class='label'>Per-stage timings</div><div class='bars'><div class='bar-row'><span class='bar-label'>Lexer</span><span class='bar' style='width:18%'></span><span class='bar-ms'>0.018 ms</span></div><div class='bar-row'><span class='bar-label'>Parser</span><span class='bar' style='width:18%'></span><span class='bar-ms'>0.018 ms</span></div><div class='bar-row'><span class='bar-label'>Semantic</span><span class='bar' style='width:9%'></span><span class='bar-ms'>0.009 ms</span></div><div class='bar-row'><span class='bar-label'>Planner</span><span class='bar' style='width:19%'></span><span class='bar-ms'>0.020 ms</span></div><div class='bar-row'><span class='bar-label'>Optimizer</span><span class='bar' style='width:100%'></span><span class='bar-ms'>0.103 ms</span></div><div class='bar-row'><span class='bar-label'>Interpreter</span><span class='bar' style='width:37%'></span><span class='bar-ms'>0.038 ms</span></div><div class='bar-row'><span class='bar-label'>SQLite check</span><span class='bar' style='width:52%'></span><span class='bar-ms'>0.054 ms</span></div></div></div>
+      </div>
+      <div class='label'>Result (plan interpreter)</div>
+      <table class='results'><thead><tr><th>id</th><th>book_id</th><th>member_id</th><th>due_date</th></tr></thead><tbody><tr><td>1</td><td>1</td><td>1</td><td>2024-05-01</td></tr><tr><td>2</td><td>4</td><td>2</td><td>2024-05-10</td></tr><tr><td>3</td><td>6</td><td>1</td><td>2024-06-01</td></tr></tbody></table>
+      <p class='check'>Cross-check vs SQLite: <span class='badge ok'>MATCH</span> <span class='muted'>same 3 row(s) (compared as a multiset: no ORDER BY)</span></p>
+    
+    </section>
+    <section class='example' id='sql-4'>
+      <h2>Lexical error</h2>
+      <pre class='sql'>python main.py --sql "SELECT title FROM Books WHERE genre = &#x27;Fantasy"</pre>
+      <div class='label'>Tokens</div><p class='muted'>(the lexer stopped before producing tokens)</p>
+      <div class='status fail'>&#10007; Invalid<ul><li><b>[L002]</b> lexical error at line 1, col 39: Unterminated string literal: add the closing single quote (&#x27;)<pre class='caret'>SELECT title FROM Books WHERE genre = &#x27;Fantasy
+                                      ^</pre></li></ul></div>
+    </section>
+    <section class='example' id='sql-5'>
+      <h2>Syntax error</h2>
+      <pre class='sql'>python main.py --sql "SELECT title, FROM Books"</pre>
+      <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>title</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div></div>
+      <div class='status fail'>&#10007; Invalid<ul><li><b>[P001]</b> syntax error at line 1, col 15: Expected a column or expression in the SELECT list but found keyword FROM<pre class='caret'>SELECT title, FROM Books
+              ^</pre></li></ul></div>
+    </section>
+    <section class='example' id='sql-6'>
+      <h2>Non-SELECT statement is rejected</h2>
+      <pre class='sql'>python main.py --sql "DROP TABLE Books"</pre>
+      <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>DROP</div><div class='t-val'>DROP</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>TABLE</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div></div>
+      <div class='status fail'>&#10007; Invalid<ul><li><b>[P002]</b> syntax error at line 1, col 1: Only SELECT is supported: &#x27;DROP&#x27; statements are not allowed (this tool never modifies the database)<pre class='caret'>DROP TABLE Books
+^</pre></li></ul></div>
+    </section>
+    <section class='example' id='sql-7'>
+      <h2>Semantic errors</h2>
+      <pre class='sql'>python main.py --sql "SELECT titel, COUNT(*) FROM Books WHERE title = 1984"</pre>
+      <div class='label'>Tokens</div><div class='tokens'><div class='token'><div class='t-type'>SELECT</div><div class='t-val'>SELECT</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>titel</div></div><div class='token'><div class='t-type'>COMMA</div><div class='t-val'>,</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>COUNT</div></div><div class='token'><div class='t-type'>LPAREN</div><div class='t-val'>(</div></div><div class='token'><div class='t-type'>STAR</div><div class='t-val'>*</div></div><div class='token'><div class='t-type'>RPAREN</div><div class='t-val'>)</div></div><div class='token'><div class='t-type'>FROM</div><div class='t-val'>FROM</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>Books</div></div><div class='token'><div class='t-type'>WHERE</div><div class='t-val'>WHERE</div></div><div class='token'><div class='t-type'>IDENT</div><div class='t-val'>title</div></div><div class='token'><div class='t-type'>EQ</div><div class='t-val'>=</div></div><div class='token'><div class='t-type'>NUMBER</div><div class='t-val'>1984</div></div></div>
+      <div class='status fail'>&#10007; Invalid<ul><li><b>[S002]</b> semantic error at line 1, col 8: Column &#x27;titel&#x27; does not exist in table &#x27;Books&#x27;. Did you mean &#x27;title&#x27;? (known columns: author, genre, id, title)<pre class='caret'>SELECT titel, COUNT(*) FROM Books WHERE title = 1984
+       ^</pre></li><li><b>[S006]</b> semantic error at line 1, col 47: Type mismatch in comparison &#x27;=&#x27;: cannot compare TEXT column &#x27;title&#x27; with INTEGER value 1984; to match text, put the value in quotes: &#x27;1984&#x27;<pre class='caret'>SELECT titel, COUNT(*) FROM Books WHERE title = 1984
+                                              ^</pre></li></ul></div>
+    </section>
 </body>
 </html>
